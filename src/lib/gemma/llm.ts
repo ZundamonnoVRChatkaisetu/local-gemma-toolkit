@@ -122,26 +122,21 @@ export async function getGemmaModelInfo(): Promise<any> {
     return modelInfoCache;
   }
   
-  // 503エラーを考慮して初期化状態をチェック
-  let needsInit = !isLlamaServerRunning();
-  if (!needsInit) {
-    try {
-      // サーバーが応答するか確認
-      const isResponding = await pingLlamaServer(1, 1000);
-      if (!isResponding) {
-        needsInit = true;
-      }
-    } catch (error) {
-      needsInit = true;
-    }
-  }
-  
-  if (needsInit) {
-    console.log('Server not responsive, initializing before getting model info');
-    await initializeLLM();
+  // サーバーが実行中かどうかをチェック
+  const isRunning = isLlamaServerRunning();
+  if (!isRunning) {
+    console.log('LLM server not running, cannot get model info');
+    throw new Error('LLMサーバーが実行されていません。アプリケーションを再起動してください。');
   }
   
   try {
+    // サーバーが応答するか確認
+    const isResponding = await pingLlamaServer(2, 2000);
+    if (!isResponding) {
+      console.log('LLM server not responding, cannot get model info');
+      throw new Error('LLMサーバーが応答していません。しばらく待ってから再試行してください。');
+    }
+    
     modelInfoCache = await getModelInfo();
     return modelInfoCache;
   } catch (error) {
@@ -174,22 +169,22 @@ export async function generateCompletion(
   messages: Message[],
   params: Partial<ModelParams> = {}
 ): Promise<string> {
-  // LLMが初期化されていることを確認
+  // サーバーが実行中かどうかをチェック
   if (!isLlamaServerRunning()) {
-    console.log('Server not running, initializing...');
-    await initializeLLM();
-  } else {
-    // サーバープロセスは実行中だが、応答しているか確認
-    try {
-      const isResponding = await pingLlamaServer(1, 1000);
-      if (!isResponding) {
-        console.log('Server process running but not responsive, attempting initialization...');
-        await initializeLLM();
-      }
-    } catch (error) {
-      console.warn('Error checking server health, attempting initialization:', error);
-      await initializeLLM();
+    console.error('LLM server is not running');
+    throw new Error('LLMサーバーが実行されていません。アプリケーションを再起動してください。');
+  }
+  
+  // サーバーが応答しているか確認
+  try {
+    const isResponding = await pingLlamaServer(2, 2000);
+    if (!isResponding) {
+      console.warn('LLM server is not responding to health checks');
+      throw new Error('LLMサーバーが応答していません。しばらく待ってから再試行してください。');
     }
+  } catch (error) {
+    console.error('Error checking LLM server health:', error);
+    throw new Error('LLMサーバーの状態確認中にエラーが発生しました。');
   }
   
   // デフォルトパラメータとマージ
@@ -217,23 +212,22 @@ export async function* streamCompletion(
   messages: Message[],
   params: Partial<ModelParams> = {}
 ): AsyncGenerator<string, void, unknown> {
-  // LLMが初期化されていることを確認
+  // サーバーが実行中かどうかをチェック
   if (!isLlamaServerRunning()) {
-    yield 'サーバーを初期化しています、しばらくお待ちください...';
-    await initializeLLM();
-  } else {
-    // サーバープロセスは実行中だが、応答しているか確認
-    try {
-      const isResponding = await pingLlamaServer(1, 1000);
-      if (!isResponding) {
-        yield 'サーバーとの接続を確立しています、しばらくお待ちください...';
-        await initializeLLM();
-      }
-    } catch (error) {
-      console.warn('Error checking server health, attempting initialization:', error);
-      yield 'サーバー状態を確認中に問題が発生しました、再接続しています...';
-      await initializeLLM();
+    yield 'LLMサーバーが実行されていません。アプリケーションを再起動してください。';
+    throw new Error('LLMサーバーが実行されていません');
+  }
+  
+  // サーバーが応答しているか確認
+  try {
+    const isResponding = await pingLlamaServer(2, 2000);
+    if (!isResponding) {
+      yield 'LLMサーバーが応答していません。モデルの初期化が完了するまで待機しています...';
+      console.warn('LLM server is not responding to health checks');
     }
+  } catch (error) {
+    console.error('Error checking LLM server health:', error);
+    yield 'LLMサーバーの状態確認中にエラーが発生しました。';
   }
   
   // デフォルトパラメータとマージ
