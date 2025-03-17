@@ -251,7 +251,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     }
     
     // llama-serverコマンドの構築
-    // 全てのオプションをダブルハイフン形式に統一
+    // 全てのオプションをダブルハイフン形式に統一し、不要なオプションを削除
     const serverArgs = [
       '--model', currentConfig.modelPath,
       '--ctx-size', currentConfig.contextSize.toString(),
@@ -260,8 +260,8 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       '--n-gpu-layers', currentConfig.gpuLayers.toString(),
       '--host', currentConfig.serverAddress,
       '--port', currentConfig.serverPort.toString(),
-      '--mlock', // メモリをロックして強制スワップを防止
-      '--log-format', 'json'
+      '--mlock' // メモリをロックして強制スワップを防止
+      // '--log-format' オプションは削除 - サポートされていない可能性があるため
     ];
     
     console.log(`Starting llama-server with command: ${currentConfig.binaryPath} ${serverArgs.join(' ')}`);
@@ -276,9 +276,9 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     serverProcess.stdout?.on('data', (data: Buffer) => {
       const logData = data.toString().trim();
       try {
-        // JSON形式のログをパース
+        // JSONとして解析を試みる（JSONでない場合は例外が発生）
         const logJson = JSON.parse(logData);
-        console.log(`[llama-server] ${logJson.message}`);
+        console.log(`[llama-server] ${logJson.message || JSON.stringify(logJson)}`);
       } catch (e) {
         // JSONでない場合はそのまま出力
         console.log(`[llama-server] ${logData}`);
@@ -303,7 +303,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       // 標準出力を監視してサーバー起動を検出
       const onStdout = (data: Buffer) => {
         const output = data.toString();
-        if (output.includes('server listening')) {
+        if (output.includes('server listening') || output.includes('Server listening')) {
           serverProcess?.stdout?.removeListener('data', onStdout);
           clearTimeout(startTimeout);
           resolve();
