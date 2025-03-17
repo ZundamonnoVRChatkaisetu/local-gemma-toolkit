@@ -21,6 +21,7 @@ interface LlamaCompletionResponse {
 interface LlamaStreamChunk {
   content: string;
   stop?: boolean;
+  error?: string;
 }
 
 /**
@@ -74,7 +75,8 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
 }
 
 /**
- * llama.cppサーバーにストリーミング補完リクエストを送信
+ * llama.cppサーバーにストリーミングリクエストを送信
+ * エラーハンドリングを改善
  */
 export async function* sendStreamingCompletionRequest(
   params: LlamaCompletionParams
@@ -129,7 +131,14 @@ export async function* sendStreamingCompletionRequest(
           if (!line.trim()) continue;
           
           try {
+            // エラー発生時のロギングを追加
             const data = JSON.parse(line) as LlamaStreamChunk;
+            
+            // エラーチェックを追加
+            if (data.error) {
+              console.error(`Stream error: ${data.error}`);
+              throw new Error(data.error);
+            }
             
             if (data.content) {
               yield data.content;
@@ -139,7 +148,25 @@ export async function* sendStreamingCompletionRequest(
               return;
             }
           } catch (e) {
+            // JSONパース失敗時のエラーハンドリングを改善
             console.warn('Failed to parse JSON chunk:', line);
+            try {
+              // 一部のエラーレスポンスが特殊なフォーマットである可能性があるため再試行
+              if (line.includes('error') || line.includes('Error')) {
+                const errorMatch = line.match(/"error":\s*"([^"]*)"/i);
+                if (errorMatch && errorMatch[1]) {
+                  throw new Error(`Stream error: ${errorMatch[1]}`);
+                }
+              }
+              
+              // <end_of_turn>トークンの処理を追加
+              if (line.includes('<end_of_turn>')) {
+                return;
+              }
+            } catch (innerError) {
+              console.error('Error processing stream chunk:', innerError);
+              throw innerError;
+            }
           }
         }
       }
@@ -212,8 +239,13 @@ export async function generateCompletion(
     stream: false,
   };
   
-  // 補完リクエスト送信
-  return await sendCompletionRequest(completionParams);
+  try {
+    // 補完リクエスト送信
+    return await sendCompletionRequest(completionParams);
+  } catch (error) {
+    console.error('Error in generateCompletion:', error);
+    return '申し訳ありません。リクエストの処理中にエラーが発生しました。もう一度お試しください。';
+  }
 }
 
 /**
@@ -240,6 +272,11 @@ export async function* generateStreamingCompletion(
     stream: true,
   };
   
-  // ストリーミング補完リクエスト送信
-  yield* sendStreamingCompletionRequest(completionParams);
+  try {
+    // ストリーミング補完リクエスト送信
+    yield* sendStreamingCompletionRequest(completionParams);
+  } catch (error) {
+    console.error('Error in generateStreamingCompletion:', error);
+    yield '申し訳ありません。リクエストの処理中にエラーが発生しました。もう一度お試しください。';
+  }
 }
