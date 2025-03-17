@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateCompletion, streamCompletion, Message, initializeLLM, isLlamaServerRunning } from '@/lib/gemma';
+import { generateCompletion, streamCompletion, Message, initializeLLM } from '@/lib/gemma';
+import { isLlamaServerRunning } from '@/lib/gemma/llama-cpp';
 import prisma from '@/lib/prisma/client';
 
 // Handle POST requests to /api/chat
@@ -133,6 +134,7 @@ export async function POST(req: NextRequest) {
 // サーバーヘルスチェックAPIを追加
 export async function GET(req: NextRequest) {
   try {
+    // 直接importした関数を使用
     const status = isLlamaServerRunning() 
       ? 'running' 
       : 'stopped';
