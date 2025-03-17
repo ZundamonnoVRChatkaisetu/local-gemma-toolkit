@@ -32,9 +32,52 @@ export interface LlamaCppConfig {
   serverPort: number;
 }
 
+// 利用可能な実行ファイルを自動検出
+function findAvailableBinary(): string {
+  // 検索対象のバイナリ名（優先順位順）
+  const binaryNames = [
+    'llama-server.exe',
+    'server.exe',
+    'llama-server',
+    'llama_server.exe',
+    'llama_cpp_server.exe',
+    'server'
+  ];
+  
+  const binDir = path.join(process.cwd(), 'bin');
+  
+  // binディレクトリが存在するか確認
+  if (fs.existsSync(binDir)) {
+    // ディレクトリ内のファイル一覧
+    try {
+      const files = fs.readdirSync(binDir);
+      
+      // 優先順位順にバイナリを探す
+      for (const name of binaryNames) {
+        if (files.includes(name)) {
+          return path.join('bin', name);
+        }
+      }
+      
+      // 見つからない場合は.exeで終わるファイルを探す（Windows）
+      if (process.platform === 'win32') {
+        const exeFiles = files.filter(f => f.endsWith('.exe'));
+        if (exeFiles.length > 0) {
+          return path.join('bin', exeFiles[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Error reading bin directory:', err);
+    }
+  }
+  
+  // デフォルトパスを返す
+  return process.platform === 'win32' ? 'bin\\llama-server.exe' : './bin/llama-server';
+}
+
 // デフォルト設定
 export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
-  binaryPath: process.platform === 'win32' ? 'bin\\llama-server.exe' : './bin/llama-server',
+  binaryPath: findAvailableBinary(),
   modelPath: path.join(process.cwd(), 'models/gemma-3-27b-it-Q6_K.gguf'),
   contextSize: 4096,
   batchSize: 512,
@@ -58,6 +101,40 @@ export async function checkLlamaBinary(config: LlamaCppConfig = currentConfig): 
     return true;
   } catch (error) {
     console.error(`llama.cpp binary not found or not executable at ${config.binaryPath}`);
+    
+    // 利用可能なバイナリを探す
+    try {
+      const binDir = path.join(process.cwd(), 'bin');
+      if (fs.existsSync(binDir)) {
+        const files = await fs.promises.readdir(binDir);
+        const exeFiles = files.filter(f => 
+          f.endsWith('.exe') || 
+          (!f.endsWith('.dll') && !f.endsWith('.md') && !f.includes('.'))
+        );
+        
+        if (exeFiles.length > 0) {
+          console.log('Available executable files:');
+          exeFiles.forEach(file => console.log(`- ${file}`));
+          
+          // 最初の実行可能ファイルを使用
+          const firstExe = path.join(binDir, exeFiles[0]);
+          console.log(`Will try to use: ${firstExe}`);
+          
+          // 設定を更新
+          currentConfig.binaryPath = firstExe;
+          
+          // 実行権限を確認
+          if (process.platform !== 'win32') {
+            await fs.promises.chmod(firstExe, 0o755);
+          }
+          
+          return true;
+        }
+      }
+    } catch (err) {
+      console.error('Error searching for binary files:', err);
+    }
+    
     return false;
   }
 }
