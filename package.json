@@ -8,10 +8,14 @@
     "start": "next start",
     "lint": "next lint",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "model:scan": "node scripts/scan-models.js",
+    "db:setup": "prisma migrate dev",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^5.0.0",
+    "@radix-ui/react-slot": "^1.0.2",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -30,16 +34,20 @@
     "postcss": "^8.4.0",
     "autoprefixer": "^10.4.0",
     "sqlite3": "^5.1.0",
+    "better-sqlite3": "^9.4.0",
     "lucide-react": "^0.263.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
-    "tailwind-merge": "^2.0.0"
+    "tailwind-merge": "^2.0.0",
+    "node-fetch": "^3.3.2",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "prisma": "^5.0.0",
     "eslint-plugin-react": "^7.33.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "typescript-eslint": "^5.59.0",
-    "@types/ws": "^8.5.0"
+    "@types/ws": "^8.5.0",
+    "@types/better-sqlite3": "^7.6.9"
   }
 }
