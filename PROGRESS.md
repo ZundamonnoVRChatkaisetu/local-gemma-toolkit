@@ -21,6 +21,11 @@
 
 ## 📈 最新の進捗
 
+### 2025-03-17 (第三フェーズ)
+- package.jsonの依存関係修正
+  - `typescript-eslint`を`@typescript-eslint/eslint-plugin`と`@typescript-eslint/parser`に修正
+  - npmインストールエラーを解決
+
 ### 2025-03-17 (第二フェーズ)
 - llama.cpp統合モジュールの実装
 - llama.cppサーバーと通信するためのクライアント実装
@@ -67,6 +72,10 @@
 - ✅ メモリ要件推定
 - ✅ モデルパラメータ解析
 - ✅ ダウンロードユーティリティ
+
+### バグ修正と安定化
+- ✅ 依存関係の問題を修正（typescript-eslint）
+- ✅ npm installの実行を可能に
 
 ## 🔍 次のステップ（実装時）
 - メモリ使用量のリアルタイムモニタリング
