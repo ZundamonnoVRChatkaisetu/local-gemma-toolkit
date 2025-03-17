@@ -11,7 +11,8 @@ export async function POST(req: NextRequest) {
     // サーバーが応答しているかを直接チェック
     let serverResponding = false;
     try {
-      serverResponding = await pingLlamaServer(2, 500);
+      // 503ステータスも考慮して改善したpingLlamaServer関数を使用
+      serverResponding = await pingLlamaServer(2, 1000);
     } catch (pingError) {
       console.warn('Error pinging llama-server:', pingError);
     }
@@ -28,10 +29,15 @@ export async function POST(req: NextRequest) {
           );
         }
         
-        // 初期化後に再度ping
-        serverResponding = await pingLlamaServer(1, 1000);
+        // 初期化後に再度ping（より長い待機時間を設定）
+        console.log('LLM initialized, waiting for server to become responsive...');
+        // 初期化直後は応答が遅いことがあるため、待機時間を延長
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        serverResponding = await pingLlamaServer(2, 2000);
         if (!serverResponding) {
-          console.warn('Server initialized but not responding to ping. Continuing anyway...');
+          console.warn('Server initialized but not responding to ping. Continuing anyway since process might still be loading...');
+          // プロセスが起動中でも続行する
         }
       } catch (initError) {
         console.error('Error initializing LLM:', initError);
@@ -114,6 +120,27 @@ export async function POST(req: NextRequest) {
                 timeout: 10000
               });
               
+              // 503エラーの場合は初期化中と判断し待機
+              if (response.status === 503) {
+                console.log('Server returned 503, waiting for initialization...');
+                controller.enqueue(encoder.encode('サーバーが初期化中です、少々お待ちください...\n'));
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // 再試行
+                const retryResponse = await fetch('http://127.0.0.1:8080/completion', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(llamaRequest),
+                  timeout: 15000
+                });
+                
+                if (retryResponse.ok && retryResponse.body) {
+                  response.body = retryResponse.body;
+                }
+              }
+              
               if (response.ok && response.body) {
                 directServerResponse = true;
                 console.log('Direct server communication successful');
@@ -160,7 +187,7 @@ export async function POST(req: NextRequest) {
                 
                 reader.releaseLock();
               } else {
-                console.warn('Direct server communication failed, falling back to library');
+                console.warn(`Direct server communication failed (status: ${response.status}), falling back to library`);
               }
             } catch (directError) {
               console.error('Error in direct server communication:', directError);
@@ -225,6 +252,8 @@ export async function POST(req: NextRequest) {
     // Non-streaming response
     try {
       // 直接 llama-server と通信を試みる
+      let directResponse = null;
+      
       try {
         console.log('Attempting direct non-streaming communication with llama-server...');
         
@@ -262,15 +291,38 @@ export async function POST(req: NextRequest) {
           timeout: 30000
         });
         
-        if (response.ok) {
+        // 503エラーの場合は初期化中と判断し待機
+        if (response.status === 503) {
+          console.log('Server returned 503, waiting for initialization...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // 再試行
+          const retryResponse = await fetch('http://127.0.0.1:8080/completion', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(llamaRequest),
+            timeout: 30000
+          });
+          
+          if (retryResponse.ok) {
+            const data = await retryResponse.json();
+            directResponse = data.content;
+          }
+        } else if (response.ok) {
           const data = await response.json();
-          return NextResponse.json({ completion: data.content });
+          directResponse = data.content;
         } else {
-          console.warn('Direct server communication failed, falling back to library');
+          console.warn(`Direct server communication failed (status: ${response.status}), falling back to library`);
         }
       } catch (directError) {
         console.error('Error in direct server communication:', directError);
         console.log('Falling back to library implementation');
+      }
+      
+      if (directResponse) {
+        return NextResponse.json({ completion: directResponse });
       }
       
       // ライブラリ実装にフォールバック
@@ -320,6 +372,9 @@ export async function GET(req: NextRequest) {
   try {
     // サーバーが応答しているかを直接チェック
     let serverResponding = false;
+    let serverStatus = 'stopped';
+    let serverMessage = '';
+    
     try {
       // 直接エンドポイントにリクエストを送信
       const response = await fetch('http://127.0.0.1:8080/health', {
@@ -327,24 +382,52 @@ export async function GET(req: NextRequest) {
         timeout: 2000
       });
       
-      serverResponding = response.ok;
+      if (response.ok) {
+        serverResponding = true;
+        serverStatus = 'running';
+      } else if (response.status === 503) {
+        // 503はサーバーが初期化中であることを示す
+        serverResponding = true;
+        serverStatus = 'initializing';
+        serverMessage = 'サーバーは起動中ですが、まだ完全に初期化されていません';
+      } else {
+        // その他のステータスコード
+        serverMessage = `ヘルスチェックエンドポイントが異常なステータスコードを返しました: ${response.status}`;
+      }
       
       if (!serverResponding) {
         // モデルエンドポイントも試す
-        const modelResponse = await fetch('http://127.0.0.1:8080/model', {
-          method: 'GET',
-          timeout: 2000
-        });
-        
-        serverResponding = modelResponse.ok;
+        try {
+          const modelResponse = await fetch('http://127.0.0.1:8080/model', {
+            method: 'GET',
+            timeout: 2000
+          });
+          
+          if (modelResponse.ok) {
+            serverResponding = true;
+            serverStatus = 'running';
+          } else if (modelResponse.status === 503) {
+            serverResponding = true;
+            serverStatus = 'initializing';
+            serverMessage = 'サーバーは起動中ですが、まだ完全に初期化されていません';
+          }
+        } catch (modelError) {
+          console.warn('Error checking model endpoint:', modelError);
+        }
       }
     } catch (fetchError) {
       console.warn('Error checking llama-server health:', fetchError);
-      serverResponding = false;
+      
+      // プロセスが起動しているかチェック
+      if (isLlamaServerRunning()) {
+        serverStatus = 'starting';
+        serverMessage = 'サーバープロセスは起動していますが、HTTPリクエストにはまだ応答していません';
+      }
     }
     
     return NextResponse.json({ 
-      status: serverResponding ? 'running' : 'stopped',
+      status: serverStatus,
+      message: serverMessage,
       timestamp: new Date().toISOString() 
     });
   } catch (error) {
