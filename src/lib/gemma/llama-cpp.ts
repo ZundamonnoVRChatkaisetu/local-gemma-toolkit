@@ -30,6 +30,8 @@ export interface LlamaCppConfig {
   serverAddress: string;
   // サーバーポート
   serverPort: number;
+  // サーバー起動タイムアウト（ミリ秒）
+  startTimeout: number;
 }
 
 // 利用可能な実行ファイルを自動検出
@@ -84,7 +86,8 @@ export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
   threads: Math.max(1, Math.floor(os.cpus().length * 0.75)), // CPUコア数の75%
   gpuLayers: 0, // デフォルトではGPU無効
   serverAddress: '127.0.0.1',
-  serverPort: 8080
+  serverPort: 8080,
+  startTimeout: 300000 // 5分（大きなモデル用に延長）
 };
 
 // llama-serverプロセスの状態管理
@@ -261,7 +264,6 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       '--host', currentConfig.serverAddress,
       '--port', currentConfig.serverPort.toString(),
       '--mlock' // メモリをロックして強制スワップを防止
-      // '--log-format' オプションは削除 - サポートされていない可能性があるため
     ];
     
     console.log(`Starting llama-server with command: ${currentConfig.binaryPath} ${serverArgs.join(' ')}`);
@@ -299,11 +301,33 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     // サーバーが起動するのを待つ
     await new Promise<void>((resolve, reject) => {
       let startTimeout: NodeJS.Timeout;
+      let lastOutput = '';
+      let serverStartDetected = false;
       
       // 標準出力を監視してサーバー起動を検出
       const onStdout = (data: Buffer) => {
         const output = data.toString();
-        if (output.includes('server listening') || output.includes('Server listening')) {
+        lastOutput += output;
+        
+        // サーバー起動検出条件（複数の可能性をチェック）
+        if (
+          output.includes('server listening') || 
+          output.includes('Server listening') ||
+          output.includes('HTTP server is listening') ||
+          output.includes('main: server is listening') ||
+          (output.includes('listening') && output.includes('http://'))
+        ) {
+          serverStartDetected = true;
+          console.log('[llama-server] Server start detected');
+        }
+        
+        // モデル読み込み完了を検出
+        if (
+          (output.includes('model loaded') && serverStartDetected) ||
+          (output.includes('all slots are idle') && serverStartDetected) ||
+          (output.includes('starting the main loop') && serverStartDetected)
+        ) {
+          console.log('[llama-server] Model loading completed');
           serverProcess?.stdout?.removeListener('data', onStdout);
           clearTimeout(startTimeout);
           resolve();
@@ -312,11 +336,20 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       
       serverProcess?.stdout?.on('data', onStdout);
       
-      // 30秒でタイムアウト
+      // タイムアウト設定（大きなモデル用に延長）
       startTimeout = setTimeout(() => {
         serverProcess?.stdout?.removeListener('data', onStdout);
-        reject(new Error('Timeout waiting for llama-server to start'));
-      }, 30000);
+        
+        // サーバーが起動しているが明示的な完了メッセージがない場合を考慮
+        if (serverStartDetected) {
+          console.log('[llama-server] Server appears to be running, continuing despite no explicit completion message');
+          resolve();
+        } else {
+          console.error('[llama-server] Timeout waiting for server start. Last output:');
+          console.error(lastOutput);
+          reject(new Error('Timeout waiting for llama-server to start'));
+        }
+      }, currentConfig.startTimeout);
       
       // エラーハンドリング
       serverProcess?.on('error', (err) => {
@@ -327,7 +360,8 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     });
     
     // サーバー起動後、APIが応答するまで少し待機
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log('[llama-server] Waiting for API to become responsive...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     isServerRunning = true;
     console.log(`llama-server started successfully on ${currentConfig.serverAddress}:${currentConfig.serverPort}`);
