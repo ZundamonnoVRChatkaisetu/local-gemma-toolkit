@@ -1,6 +1,6 @@
 # Local Gemma Toolkit
 
-プライバシーを重視した、ローカル環境で動作するGemma 27B（6B量子化）を活用したAIツールキット。オフライン環境で高機能なAI機能を提供します。
+プライバシーを重視した、ローカル環境で動作するGemma 12B（Q8_0量子化）を活用したAIツールキット。オフライン環境で高機能なAI機能を提供します。
 
 ## 機能概要
 
@@ -29,7 +29,7 @@
 - **フロントエンド**: Next.js, React, Tailwind CSS, shadcn/ui
 - **バックエンド**: Node.js
 - **データベース**: SQLite + Prisma
-- **AI**: Gemma 27B (6B量子化)
+- **AI**: Gemma 12B (Q8_0量子化)
 - **ベクトルDB**: SQLite拡張またはベクトル検索対応ライブラリ
 
 ## インストール方法
@@ -63,17 +63,28 @@ npm run dev
 - [公式リリース](https://github.com/ggerganov/llama.cpp/releases)からダウンロード
 - [LM Studio](https://lmstudio.ai/)や[KoboldCpp](https://github.com/LostRuins/koboldcpp)からバイナリを抽出
 
-### 2. Gemma 27B (6B量子化)モデルの設定
+### 2. Gemma 12B (Q8_0量子化)モデルの設定
 
-1. **モデル入手**: LM StudioなどからGemma 27Bモデル（6B量子化版）のGGUFファイルをダウンロード
+1. **モデル入手**: LM StudioなどからGemma 12Bモデル（Q8_0量子化版）のGGUFファイルをダウンロード
 2. **モデル配置**: 
    - プロジェクトのルートディレクトリに`models`フォルダが存在しない場合は作成
    - ダウンロードしたGGUFファイルを`models`ディレクトリに配置
-   - デフォルトのファイル名: `gemma-3-27b-it-Q6_K.gguf`（変更可能）
+   - デフォルトのファイル名: `gemma-3-12b-it-Q8_0.gguf`（変更可能）
 3. **自動検出**: アプリケーション起動時に`models`ディレクトリがスキャンされ、利用可能なモデルが自動的に検出されます
 4. **デフォルト選択**: 複数のモデルがある場合、最大サイズのモデルが自動的にデフォルトとして選択されます
 
+### 3. モデル変更について（2025-03-17更新）
+
+当初は27B (6B量子化)モデルを使用していましたが、より安定したパフォーマンスを得るために12B (Q8_0量子化)モデルに変更しました。
+現在のデフォルトモデルは`gemma-3-12b-it-Q8_0.gguf`です。
+
+**注意**: モデル変更後、チャット機能に問題が発生している場合があります。この問題は調査中です。
+
 ## 最新の更新（2025-03-17）
+
+### モデル変更
+- 使用モデルを「gemma-3-12b-it-Q8_0.gguf」に変更
+- チャット機能の安定性向上のための調整中
 
 ### サーバー初期化とヘルスチェックの改善
 - サーバー初期化ロジックを強化し、503エラーを適切に処理
@@ -104,7 +115,7 @@ Access to fetch at 'http://127.0.0.1:8080/completion' from origin 'http://localh
    a) **推奨: llama-serverの起動オプション修正**:
    ```bash
    # bin/llama-server.exeの起動オプションに--cors '*'を追加
-   bin/llama-server.exe --model models/gemma-3-27b-it-Q6_K.gguf --ctx-size 4096 --batch-size 512 --threads 21 --n-gpu-layers 32 --host 127.0.0.1 --port 8080 --cors '*' --mlock
+   bin/llama-server.exe --model models/gemma-3-12b-it-Q8_0.gguf --ctx-size 4096 --batch-size 512 --threads 21 --n-gpu-layers 32 --host 127.0.0.1 --port 8080 --cors '*' --mlock
    ```
    
    b) **代替: API経由での通信に切り替え**:
@@ -114,7 +125,7 @@ Access to fetch at 'http://127.0.0.1:8080/completion' from origin 'http://localh
 
 ### サーバー初期化エラー（503 Service Unavailable）
 
-大規模モデル（例：27B）を使用する場合、初期ロード時に以下のようなエラーが表示されることがあります：
+大規模モデル（例：12B）を使用する場合、初期ロード時に以下のようなエラーが表示されることがあります：
 
 ```
 Error checking llama-server health: FetchError: request to http://127.0.0.1:8080/health failed, reason: connect ECONNREFUSED 127.0.0.1:8080
@@ -167,7 +178,7 @@ Model file not found or not readable at /path/to/model.gguf
 1. `models`ディレクトリが存在することを確認
 2. `models`ディレクトリに`.gguf`または`.bin`拡張子のモデルファイルが存在することを確認
 3. ファイルの読み取り権限があることを確認
-4. モデル名の設定が正しいことを確認（デフォルトは`gemma-3-27b-it-Q6_K.gguf`）
+4. モデル名の設定が正しいことを確認（デフォルトは`gemma-3-12b-it-Q8_0.gguf`）
 
 ### チャット機能でエラーが発生する場合
 
@@ -179,7 +190,7 @@ Model file not found or not readable at /path/to/model.gguf
 ### 応答が遅い、または無応答の場合
 
 1. モデルの初期化が完了しているか確認してください
-2. 大きなモデル（27B）は応答生成に時間がかかることがあります（特に初回）
+2. 大きなモデル（12B）は応答生成に時間がかかることがあります（特に初回）
 3. GPUのメモリ不足が発生している可能性があります（コンソールログを確認）
 4. モデルパラメータ（コンテキストサイズやバッチサイズ）の調整を検討してください
 
