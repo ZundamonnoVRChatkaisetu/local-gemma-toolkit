@@ -7,6 +7,8 @@ import fetch from 'node-fetch';
 
 // Handle POST requests to /api/chat
 export async function POST(req: NextRequest) {
+  console.log('🟢 [API Route] POST /api/chat received');
+  
   try {
     // サーバーが応答しているかを直接チェック
     let serverResponding = false;
@@ -23,6 +25,7 @@ export async function POST(req: NextRequest) {
       try {
         const initialized = await initializeLLM();
         if (!initialized) {
+          console.log('🔴 [API Route] LLM initialization failed');
           return NextResponse.json(
             { error: 'LLMサーバーの初期化に失敗しました。サーバーログを確認してください。' },
             { status: 500 }
@@ -52,6 +55,8 @@ export async function POST(req: NextRequest) {
     let messages, conversationId, stream;
     try {
       const body = await req.json();
+      console.log('🟢 [API Route] Request body:', body);
+      
       messages = body.messages;
       conversationId = body.conversationId;
       stream = body.stream !== undefined ? body.stream : true;
@@ -64,6 +69,7 @@ export async function POST(req: NextRequest) {
     }
     
     if (!messages || !Array.isArray(messages)) {
+      console.log('🔴 [API Route] Invalid messages in request body');
       return NextResponse.json(
         { error: 'メッセージ配列が必要です' },
         { status: 400 }
@@ -72,6 +78,7 @@ export async function POST(req: NextRequest) {
     
     // If stream is true, set up a streaming response
     if (stream) {
+      console.log('🟢 [API Route] Setting up streaming response');
       const encoder = new TextEncoder();
       const customReadable = new ReadableStream({
         async start(controller) {
@@ -80,24 +87,33 @@ export async function POST(req: NextRequest) {
             controller.enqueue(encoder.encode(''));
             
             // 常にライブラリ実装を使用（直接通信はスキップ）
-            console.log('Using library implementation for streaming');
+            console.log('🟢 [API Route] Using library implementation for streaming');
             
-            // Use the streaming version of the LLM completion
-            const streamGen = streamCompletion(messages);
-            
-            // 応答を受信したかどうかを追跡
-            let receivedResponse = false;
-            
-            // Send message as chunks come in
-            for await (const chunk of streamGen) {
-              receivedResponse = true;
-              controller.enqueue(encoder.encode(chunk));
-            }
-            
-            // 応答が空だった場合
-            if (!receivedResponse) {
+            try {
+              // Use the streaming version of the LLM completion
+              const streamGen = streamCompletion(messages);
+              
+              // 応答を受信したかどうかを追跡
+              let receivedResponse = false;
+              
+              // Send message as chunks come in
+              for await (const chunk of streamGen) {
+                receivedResponse = true;
+                console.log('🟢 [API Route] Streaming chunk:', chunk.slice(0, 50) + (chunk.length > 50 ? '...' : ''));
+                controller.enqueue(encoder.encode(chunk));
+              }
+              
+              // 応答が空だった場合
+              if (!receivedResponse) {
+                console.log('🔴 [API Route] No response received from streamCompletion');
+                controller.enqueue(encoder.encode(
+                  '応答を生成できませんでした。サーバーの状態を確認してください。'
+                ));
+              }
+            } catch (streamError) {
+              console.error('🔴 [API Route] Error in streamCompletion:', streamError);
               controller.enqueue(encoder.encode(
-                '応答を生成できませんでした。サーバーの状態を確認してください。'
+                `\n\nストリームエラー: ${streamError.message || '不明なエラー'}`
               ));
             }
             
@@ -107,6 +123,7 @@ export async function POST(req: NextRequest) {
               // In a real implementation, we'd collect the full response and save it
             }
             
+            console.log('🟢 [API Route] Streaming completed, closing controller');
             controller.close();
           } catch (error) {
             console.error('Error in streaming response:', error);
@@ -124,6 +141,7 @@ export async function POST(req: NextRequest) {
         },
       });
       
+      console.log('🟢 [API Route] Returning streaming response');
       return new NextResponse(customReadable, {
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -137,10 +155,11 @@ export async function POST(req: NextRequest) {
     // Non-streaming response
     try {
       // 常にライブラリ実装を使用（直接通信はスキップ）
-      console.log('Using library implementation for non-streaming response');
+      console.log('🟢 [API Route] Using library implementation for non-streaming response');
       
       // ライブラリ実装で補完を生成
       const completion = await generateCompletion(messages);
+      console.log('🟢 [API Route] Generated completion:', completion.slice(0, 50) + (completion.length > 50 ? '...' : ''));
       
       // In a real implementation, save to database
       if (conversationId) {
