@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { Message } from '@/lib/gemma';
+import { AlertCircle } from 'lucide-react';
 
 interface ChatInterfaceProps {
   initialMessages?: Message[];
@@ -17,8 +18,32 @@ export function ChatInterface({
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isLoading, setIsLoading] = useState(false);
   const [streamedContent, setStreamedContent] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // スタートアップ時にAPI健全性チェックを実行
+  useEffect(() => {
+    const checkApiHealth = async () => {
+      try {
+        const response = await fetch('/api/chat');
+        if (!response.ok) {
+          throw new Error(`API health check failed with status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.status !== 'running') {
+          console.warn(`LLM server status: ${data.status}`);
+        } else {
+          console.log('LLM server is running properly');
+        }
+      } catch (error) {
+        console.error('API health check error:', error);
+      }
+    };
+    
+    checkApiHealth();
+  }, []);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -42,15 +67,30 @@ export function ChatInterface({
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let responseText = '';
+    let lastUpdate = Date.now();
+    const UPDATE_INTERVAL = 50; // ms
 
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        
+        if (done) {
+          // 最終アップデート
+          if (responseText.trim()) {
+            setStreamedContent(responseText);
+          }
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
         responseText += chunk;
-        setStreamedContent(responseText);
+        
+        // 一定間隔でのみUIを更新（パフォーマンス最適化）
+        const now = Date.now();
+        if (now - lastUpdate > UPDATE_INTERVAL) {
+          setStreamedContent(responseText);
+          lastUpdate = now;
+        }
       }
 
       return responseText;
@@ -68,6 +108,8 @@ export function ChatInterface({
       abortControllerRef.current.abort();
     }
 
+    setError(null);
+    
     // Add user message
     const userMessage: Message = { role: 'user', content };
     setMessages((prev) => [...prev, userMessage]);
@@ -96,20 +138,37 @@ export function ChatInterface({
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.error || `API returned status ${response.status}`
-        );
+        // エラーレスポンスを処理
+        try {
+          const errorData = await response.json();
+          throw new Error(errorData.error || errorData.details || `API returned status ${response.status}`);
+        } catch (jsonError) {
+          // JSONパースに失敗した場合はテキストで取得
+          const errorText = await response.text();
+          throw new Error(errorText || `API returned status ${response.status}`);
+        }
       }
 
       // ストリーミングレスポンスを処理
       const completionText = await handleStreamedResponse(response);
-
-      // メッセージリストに追加
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: completionText },
-      ]);
+      
+      if (completionText.trim()) {
+        // メッセージリストに追加
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: completionText },
+        ]);
+      } else {
+        // 空のレスポンスの場合、エラーメッセージを表示
+        setError('応答が空でした。サーバーの状態を確認してください。');
+        setMessages((prev) => [
+          ...prev,
+          { 
+            role: 'assistant', 
+            content: '申し訳ありません。応答が生成されませんでした。サーバーの状態を確認してください。' 
+          },
+        ]);
+      }
     } catch (error) {
       // AbortErrorの場合は無視（ユーザーがキャンセルした場合）
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -119,12 +178,18 @@ export function ChatInterface({
 
       console.error('メッセージ送信エラー:', error);
       
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : '不明なエラーが発生しました';
+      
+      setError(errorMessage);
+      
       // エラーメッセージをアシスタントメッセージとして表示
       setMessages((prev) => [
         ...prev,
         { 
           role: 'assistant', 
-          content: '申し訳ありません。リクエストの処理中にエラーが発生しました。もう一度お試しください。' 
+          content: `申し訳ありません。リクエストの処理中にエラーが発生しました: ${errorMessage}` 
         },
       ]);
     } finally {
@@ -134,9 +199,46 @@ export function ChatInterface({
     }
   };
 
+  const handleRetry = () => {
+    // 最後のユーザーメッセージを取得
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find(message => message.role === 'user');
+      
+    if (lastUserMessage) {
+      // 最後のアシスタントメッセージを削除
+      const newMessages = [...messages];
+      if (newMessages[newMessages.length - 1].role === 'assistant') {
+        newMessages.pop();
+      }
+      setMessages(newMessages);
+      
+      // 同じメッセージで再試行
+      handleSubmit(lastUserMessage.content);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4">
+        {/* エラーメッセージを表示 */}
+        {error && (
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
+            <div className="flex items-center">
+              <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
+              <p className="text-sm text-red-600">
+                エラーが発生しました: {error}
+              </p>
+            </div>
+            <button 
+              onClick={handleRetry}
+              className="mt-2 text-sm text-blue-600 hover:underline"
+            >
+              再試行する
+            </button>
+          </div>
+        )}
+        
         {messages.map((message, index) => (
           <ChatMessage 
             key={index} 
