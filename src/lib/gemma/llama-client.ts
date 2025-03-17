@@ -1,515 +1,368 @@
 /**
- * llama.cppサーバーとの通信を担当するクライアント
+ * llama.cppサーバーと通信するためのクライアント実装
+ * 低レベルのAPIリクエストとレスポンス処理を担当
  */
 
 import fetch from 'node-fetch';
-import { getLlamaServerEndpoint, LlamaCompletionParams, isLlamaServerRunning } from './llama-cpp';
-import { Message } from '.';
+import { Message, ModelParams } from '.';
 
-// レスポンス型定義
-interface LlamaCompletionResponse {
-  content: string;
-  stop_reason: string;
-  model: string;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}
+// サーバーのデフォルトURL
+const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 
-interface LlamaStreamChunk {
-  content: string;
-  stop?: boolean;
-  error?: string;
-}
+// モデル情報のキャッシュ
+let modelInfoCache: any = null;
 
 /**
- * llama.cppサーバーの応答を一定間隔でポーリングして接続確認
- * 503エラーを適切に処理するように改善
+ * llama-serverのヘルスチェックを行う
+ * 実行中でなくても、起動中（503）でも成功と判断するように改良
+ * 
+ * @param attempts 試行回数
+ * @param timeout タイムアウト（ミリ秒）
+ * @returns 
  */
-export async function pingLlamaServer(maxRetries = 3, retryInterval = 1000): Promise<boolean> {
+export async function pingLlamaServer(
+  attempts: number = 2,
+  timeout: number = 2000
+): Promise<boolean> {
+  console.log(`Attempting to ping llama-server (attempt 1/${attempts})...`);
+  
+  // 初回試行
   try {
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        console.log(`Attempting to ping llama-server (attempt ${i+1}/${maxRetries})...`);
-        
-        // 直接エンドポイントを構築（getLlamaServerEndpointを使わない）
-        const endpoint = `http://127.0.0.1:8080/health`;
-        
-        try {
-          const response = await fetch(endpoint, { 
-            // タイムアウトを追加
-            timeout: 2000
-          });
-          
-          if (response.ok) {
-            console.log('llama-server is responding to health checks');
-            return true;
-          } else if (response.status === 503) {
-            // 503エラーはサーバーが起動中であることを示す場合がある
-            console.log('llama-server is starting up (status 503)');
-            
-            // 最後の試行で503の場合は、起動中として真を返す
-            if (i === maxRetries - 1) {
-              console.log('Server is still initializing but appears to be running');
-              return true;
-            }
-          } else {
-            console.log(`Unexpected status from health check: ${response.status}`);
-          }
-        } catch (fetchError) {
-          console.log(`Fetch error: ${fetchError.message}`);
-        }
-        
-        // モデルエンドポイントも試してみる
-        try {
-          const modelEndpoint = `http://127.0.0.1:8080/model`;
-          const modelResponse = await fetch(modelEndpoint, { 
-            timeout: 2000
-          });
-          
-          if (modelResponse.ok) {
-            console.log('llama-server is responding to model endpoint');
-            return true;
-          } else if (modelResponse.status === 503) {
-            // 503エラーはサーバーが起動中であることを示す場合がある
-            console.log('llama-server is starting up (model endpoint status 503)');
-            
-            // 最後の試行で503の場合は、起動中として真を返す
-            if (i === maxRetries - 1) {
-              console.log('Server is still initializing but appears to be running');
-              return true;
-            }
-          }
-        } catch (modelError) {
-          console.log(`Model endpoint error: ${modelError.message}`);
-        }
-      } catch (error) {
-        console.log(`Attempt ${i+1}/${maxRetries}: llama-server not responding yet`);
-      }
-      
-      if (i < maxRetries - 1) {
-        console.log(`Waiting ${retryInterval}ms before next attempt...`);
-        await new Promise(resolve => setTimeout(resolve, retryInterval));
-      }
-    }
+    const response = await fetch(`${DEFAULT_SERVER_URL}/health`, {
+      method: 'GET',
+      timeout: timeout
+    });
     
-    // サーバープロセスをチェック（プロセスは存在するが応答できない状態）
-    const isRunning = isLlamaServerRunning();
-    if (isRunning) {
-      console.log('llama-server process is running but not yet responding to HTTP requests');
-      // プロセスが動いている場合はtrueを返す（初期化中の可能性）
+    // 200 OK または 503 Service Unavailable（起動中）も成功とみなす
+    if (response.ok || response.status === 503) {
       return true;
     }
     
-    console.error('llama-server is not responding after multiple attempts');
-    return false;
+    console.log(`Health check returned status code: ${response.status}`);
   } catch (error) {
-    console.error('Error in pingLlamaServer:', error);
-    return false;
+    console.log('Fetch error:', error instanceof Error ? error.message : String(error));
+    
+    // モデルエンドポイントも試してみる（一部のサーバーではhealthが未実装の場合がある）
+    try {
+      const modelResponse = await fetch(`${DEFAULT_SERVER_URL}/model`, {
+        method: 'GET',
+        timeout: timeout
+      });
+      
+      if (modelResponse.ok || modelResponse.status === 503) {
+        return true;
+      }
+      
+      console.log(`Model endpoint error: ${modelResponse.status}`);
+    } catch (modelError) {
+      console.log('Model endpoint error:', modelError instanceof Error ? modelError.message : String(modelError));
+    }
   }
-}
-
-/**
- * メッセージをllama.cppに適したプロンプト形式に変換
- */
-export function formatMessagesForGemma(messages: Message[]): string {
-  return messages.map(message => {
-    switch (message.role) {
-      case 'system':
-        return `<start_of_turn>system\n${message.content.trim()}<end_of_turn>\n\n`;
-      case 'user':
-        return `<start_of_turn>user\n${message.content.trim()}<end_of_turn>\n\n`;
-      case 'assistant':
-        return `<start_of_turn>model\n${message.content.trim()}<end_of_turn>\n\n`;
-      default:
-        return `${message.content.trim()}\n\n`;
-    }
-  }).join('') + '<start_of_turn>model\n';
-}
-
-/**
- * llama.cppサーバーに補完リクエストを送信
- * 503エラーを適切に処理
- */
-export async function sendCompletionRequest(params: LlamaCompletionParams): Promise<string> {
-  // サーバー起動チェックをURLベースで行う
-  try {
-    // サーバーが応答するか確認
-    const isResponding = await pingLlamaServer(2, 500);
-    if (!isResponding) {
-      console.error('No response from llama-server, but continuing anyway...');
-    }
+  
+  // 残りの試行
+  for (let i = 1; i < attempts; i++) {
+    // 待機してから再試行
+    const waitTime = 1000 * i; // 徐々に待機時間を増やす
+    console.log(`Waiting ${waitTime}ms before next attempt...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
     
-    // 明示的なエンドポイント指定
-    const endpoint = `http://127.0.0.1:8080/completion`;
-    let retries = 0;
-    const maxRetries = 3;
+    console.log(`Attempting to ping llama-server (attempt ${i+1}/${attempts})...`);
     
-    while (retries < maxRetries) {
+    try {
+      const response = await fetch(`${DEFAULT_SERVER_URL}/health`, {
+        method: 'GET',
+        timeout: timeout + (i * 1000) // タイムアウトも徐々に増やす
+      });
+      
+      if (response.ok || response.status === 503) {
+        return true;
+      }
+      
+      console.log(`Health check returned status code: ${response.status}`);
+    } catch (error) {
+      console.log('Fetch error:', error instanceof Error ? error.message : String(error));
+      
+      // モデルエンドポイントも試してみる
       try {
-        console.log(`Sending completion request to llama-server (attempt ${retries + 1}/${maxRetries})...`);
-        
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(params),
-          timeout: 30000
+        const modelResponse = await fetch(`${DEFAULT_SERVER_URL}/model`, {
+          method: 'GET',
+          timeout: timeout + (i * 1000)
         });
         
-        if (response.ok) {
-          const data = await response.json() as LlamaCompletionResponse;
-          console.log('Received completion response');
-          return data.content || '応答内容がありませんでした。もう一度お試しください。';
-        } else if (response.status === 503) {
-          // 503はサーバーがまだ初期化中である可能性がある
-          console.log('Server returned 503, waiting for initialization...');
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
-          const errorText = await response.text();
-          console.error(`Server response error: ${response.status} ${errorText}`);
-          throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
+        if (modelResponse.ok || modelResponse.status === 503) {
+          return true;
         }
-      } catch (error) {
-        if (error.code === 'ECONNREFUSED') {
-          console.log('Connection refused, server might be still starting up...');
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
-          throw error;
-        }
+        
+        console.log(`Model endpoint error: ${modelResponse.status}`);
+      } catch (modelError) {
+        console.log('Model endpoint error:', modelError instanceof Error ? modelError.message : String(modelError));
       }
     }
-    
-    throw new Error('リクエスト処理中にタイムアウトが発生しました。サーバーが初期化中の可能性があります。');
-  } catch (error) {
-    console.error('Error sending completion request:', error);
-    throw error;
   }
-}
-
-/**
- * llama.cppサーバーにストリーミングリクエストを送信
- * ストリーミング処理を修正して応答が確実に返るように改善
- */
-export async function* sendStreamingCompletionRequest(
-  params: LlamaCompletionParams
-): AsyncGenerator<string, void, unknown> {
-  // サーバー起動チェックをURLベースで行う
-  try {
-    // サーバーが応答するか確認
-    const isResponding = await pingLlamaServer(1, 500);
-    if (!isResponding) {
-      console.error('No response from llama-server, but continuing anyway...');
-    }
-    
-    // 明示的なエンドポイント指定
-    const endpoint = `http://127.0.0.1:8080/completion`;
-    
-    // stream: trueを明示的に設定
-    const requestParams = {
-      ...params,
-      stream: true,
-    };
-    
-    let retries = 0;
-    const maxRetries = 3;
-    
-    while (retries < maxRetries) {
-      try {
-        console.log(`Sending streaming request to llama-server (attempt ${retries + 1}/${maxRetries})...`);
-        
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestParams),
-          timeout: 30000
-        });
-        
-        if (response.ok) {
-          // レスポンスがストリームであるため、body.getReader()を使用
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error('Failed to get reader from response');
-          
-          // TextDecoderを正しい設定で初期化
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-          let receivedSomething = false;
-          
-          console.log('Starting to read stream...');
-          
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              
-              // ストリームが終了した場合
-              if (done) {
-                console.log('Stream reading complete.');
-                
-                // バッファに残っているデータがあれば処理
-                if (buffer.trim()) {
-                  try {
-                    const data = JSON.parse(buffer) as LlamaStreamChunk;
-                    if (data.content) {
-                      yield data.content;
-                    }
-                  } catch (e) {
-                    // 最後のJSONが不完全な場合はプレーンテキストとして扱う
-                    if (buffer.trim()) {
-                      yield buffer.trim();
-                    }
-                  }
-                }
-                
-                break;
-              }
-              
-              // 何かデータを受信した
-              receivedSomething = true;
-              
-              // バイナリデータをテキストにデコード（ストリーム処理を明示）
-              const chunk = decoder.decode(value, { stream: true });
-              console.log(`Received chunk: ${chunk.length} bytes`);
-              
-              // バッファに追加
-              buffer += chunk;
-              
-              // JSONライン形式でデータが送られてくるため、行ごとに処理
-              const lines = buffer.split('\n');
-              
-              // 最後の行（不完全な可能性がある）をバッファに残す
-              buffer = lines.pop() || '';
-              
-              // 各行を個別に処理
-              for (const line of lines) {
-                if (!line.trim()) continue;
-                
-                try {
-                  // 正常なJSONとしてパース
-                  const data = JSON.parse(line) as LlamaStreamChunk;
-                  
-                  // エラーチェック
-                  if (data.error) {
-                    console.error(`Stream error: ${data.error}`);
-                    throw new Error(data.error);
-                  }
-                  
-                  // コンテンツを処理
-                  if (data.content) {
-                    yield data.content;
-                  }
-                  
-                  // 停止フラグ
-                  if (data.stop) {
-                    console.log('Stop flag received, ending stream');
-                    return;
-                  }
-                } catch (parseError) {
-                  // JSONパース失敗時の処理を改善
-                  console.warn('Failed to parse JSON chunk:', line);
-                  
-                  // エラーメッセージの検出
-                  if (line.includes('error') || line.includes('Error')) {
-                    const errorMatch = line.match(/\"error\":\s*\"([^\"]*)\"/i);
-                    if (errorMatch && errorMatch[1]) {
-                      throw new Error(`Stream error: ${errorMatch[1]}`);
-                    }
-                  }
-                  
-                  // 終了トークンの処理
-                  if (line.includes('<end_of_turn>')) {
-                    console.log('End of turn token found, ending stream');
-                    return;
-                  }
-                  
-                  // JSON形式でないコンテンツの処理
-                  if (line.trim() && !line.startsWith('{') && !line.startsWith('[')) {
-                    yield line.trim();
-                  }
-                }
-              }
-            }
-            
-            // ストリームが終了したが何も受信しなかった場合
-            if (!receivedSomething) {
-              console.error('No data received from the server');
-              throw new Error('No data received from the server');
-            }
-          } finally {
-            // リーダーのロックを解放
-            reader.releaseLock();
-            console.log('Stream reader released');
-          }
-          
-          // 正常終了の場合はループを抜ける
-          console.log('Stream processing completed successfully');
-          break;
-        } else if (response.status === 503) {
-          // 503はサーバーがまだ初期化中である可能性がある
-          console.log('Server returned 503, waiting for initialization...');
-          yield 'サーバーが初期化中です、しばらくお待ちください...';
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
-          // その他のエラーステータス
-          const errorText = await response.text();
-          console.error(`Server response error: ${response.status} ${errorText}`);
-          throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
-        }
-      } catch (error) {
-        // 接続拒否エラーの処理
-        if (error.code === 'ECONNREFUSED') {
-          console.log('Connection refused, server might be still starting up...');
-          yield 'サーバーとの接続を確立しています、しばらくお待ちください...';
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
-          // その他のエラー
-          console.error('Error in streaming request:', error);
-          throw error;
-        }
-      }
-    }
-    
-    // リトライ上限に達した場合
-    if (retries >= maxRetries) {
-      throw new Error('最大再試行回数に達しました。サーバーが応答していません。');
-    }
-  } catch (error) {
-    console.error('Error sending streaming completion request:', error);
-    throw error;
-  }
+  
+  console.log('llama-server is not responding after multiple attempts');
+  return false;
 }
 
 /**
  * モデル情報を取得
  */
-export async function getModelInfo(): Promise<{
-  name: string;
-  created_at: string;
-  modelParams: {
-    context_length: number;
-    embedding_length: number;
-    num_layers: number;
-    vocab_size: number;
+export async function getModelInfo(): Promise<any> {
+  // キャッシュされた情報があれば返す
+  if (modelInfoCache) {
+    return modelInfoCache;
   }
-}> {
+  
   try {
-    // 明示的なエンドポイント指定
-    const endpoint = `http://127.0.0.1:8080/model`;
-    let retries = 0;
-    const maxRetries = 3;
+    // 複数回試行する（再起動直後は503エラーが出ることがある）
+    let attempts = 0;
+    const maxAttempts = 3;
     
-    while (retries < maxRetries) {
+    while (attempts < maxAttempts) {
       try {
-        const response = await fetch(endpoint, {
+        const response = await fetch(`${DEFAULT_SERVER_URL}/model`, {
           method: 'GET',
           timeout: 5000
         });
         
-        if (response.ok) {
-          return await response.json();
-        } else if (response.status === 503) {
-          // 503はサーバーがまだ初期化中である可能性がある
-          console.log('Model endpoint returned 503, waiting for initialization...');
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
-          const errorText = await response.text();
-          throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
+        // 503はサーバーが初期化中なので再試行
+        if (response.status === 503) {
+          attempts++;
+          if (attempts < maxAttempts) {
+            console.log(`Model endpoint returned 503, waiting before retry ${attempts}/${maxAttempts}...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+          }
         }
+        
+        if (!response.ok) {
+          throw new Error(`Failed to get model info: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        modelInfoCache = data;
+        return data;
       } catch (error) {
-        if (error.code === 'ECONNREFUSED') {
-          console.log('Connection refused when fetching model info, retrying...');
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          retries++;
-        } else {
+        attempts++;
+        if (attempts >= maxAttempts) {
           throw error;
         }
+        
+        console.warn(`Error getting model info (attempt ${attempts}/${maxAttempts}):`, error);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
     
-    throw new Error('モデル情報の取得中にタイムアウトが発生しました');
+    throw new Error('Failed to get model info after multiple attempts');
   } catch (error) {
-    console.error('Error fetching model info:', error);
+    console.error('Error getting model info:', error);
     throw error;
   }
 }
 
 /**
- * メッセージ配列から補完を生成
+ * テキスト補完を生成
  */
 export async function generateCompletion(
   messages: Message[],
-  params: Partial<Omit<LlamaCompletionParams, 'prompt'>> = {}
+  params: Partial<ModelParams> = {}
 ): Promise<string> {
-  // メッセージをGemma用のプロンプト形式に変換
-  const prompt = formatMessagesForGemma(messages);
-  
-  // パラメータをデフォルト値とマージ
-  const completionParams: LlamaCompletionParams = {
-    prompt,
-    temperature: params.temperature ?? 0.7,
-    top_p: params.top_p ?? 0.9,
-    top_k: params.top_k ?? 40,
-    max_tokens: params.max_tokens ?? 2048,
-    stop: params.stop ?? ['<end_of_turn>'],
-    repeat_penalty: params.repeat_penalty ?? 1.1,
-    presence_penalty: params.presence_penalty ?? 0.0,
-    frequency_penalty: params.frequency_penalty ?? 0.0,
-    stream: false,
-  };
-  
   try {
-    // 補完リクエスト送信
-    return await sendCompletionRequest(completionParams);
+    // チャットメッセージを適切なフォーマットに変換
+    const formattedMessages = messages.map(message => ({
+      role: message.role,
+      content: message.content
+    }));
+    
+    // リクエストボディを構築
+    const body = {
+      messages: formattedMessages,
+      temperature: params.temperature ?? 0.7,
+      top_p: params.top_p ?? 0.9,
+      top_k: params.top_k ?? 40,
+      max_tokens: params.max_tokens ?? 2048,
+      stream: false,
+      stop: params.stop || [],
+    };
+    
+    // APIリクエスト
+    const response = await fetch(`${DEFAULT_SERVER_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      timeout: 60000, // 1分のタイムアウト
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.choices || data.choices.length === 0) {
+      throw new Error('No completion choices returned from the server');
+    }
+    
+    return data.choices[0].message.content;
   } catch (error) {
-    console.error('Error in generateCompletion:', error);
-    const errorMessage = error instanceof Error 
-      ? error.message 
-      : '不明なエラーが発生しました';
-    return `申し訳ありません。リクエストの処理中にエラーが発生しました: ${errorMessage}`;
+    console.error('Error generating completion:', error);
+    throw error;
   }
 }
 
 /**
- * メッセージ配列からストリーミング補完を生成
+ * ストリーミング形式でテキスト補完を生成
  */
 export async function* generateStreamingCompletion(
   messages: Message[],
-  params: Partial<Omit<LlamaCompletionParams, 'prompt'>> = {}
+  params: Partial<ModelParams> = {}
 ): AsyncGenerator<string, void, unknown> {
-  // メッセージをGemma用のプロンプト形式に変換
-  const prompt = formatMessagesForGemma(messages);
-  
-  // パラメータをデフォルト値とマージ
-  const completionParams: LlamaCompletionParams = {
-    prompt,
-    temperature: params.temperature ?? 0.7,
-    top_p: params.top_p ?? 0.9,
-    top_k: params.top_k ?? 40,
-    max_tokens: params.max_tokens ?? 2048,
-    stop: params.stop ?? ['<end_of_turn>'],
-    repeat_penalty: params.repeat_penalty ?? 1.1,
-    presence_penalty: params.presence_penalty ?? 0.0,
-    frequency_penalty: params.frequency_penalty ?? 0.0,
-    stream: true,
-  };
-  
   try {
-    // ストリーミング補完リクエスト送信
-    yield* sendStreamingCompletionRequest(completionParams);
+    // チャットメッセージを適切なフォーマットに変換
+    const formattedMessages = messages.map(message => ({
+      role: message.role,
+      content: message.content
+    }));
+    
+    // リクエストボディを構築
+    const body = {
+      messages: formattedMessages,
+      temperature: params.temperature ?? 0.7,
+      top_p: params.top_p ?? 0.9,
+      top_k: params.top_k ?? 40,
+      max_tokens: params.max_tokens ?? 2048,
+      stream: true,
+      stop: params.stop || [],
+    };
+    
+    // APIリクエスト
+    const response = await fetch(`${DEFAULT_SERVER_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      timeout: 30000, // 30秒のタイムアウト
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server returned ${response.status}: ${response.statusText} - ${errorText}`);
+    }
+    
+    if (!response.body) {
+      throw new Error('Response body is null');
+    }
+    
+    // TextDecoderでストリームを処理
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    
+    let accumulatedData = '';
+    let done = false;
+    
+    while (!done) {
+      const { value, done: readerDone } = await reader.read();
+      done = readerDone;
+      
+      if (done) break;
+      
+      // デコードしてデータを蓄積
+      const chunk = decoder.decode(value, { stream: true });
+      accumulatedData += chunk;
+      
+      // データラインを処理
+      const lines = accumulatedData.split('\n');
+      accumulatedData = lines.pop() || ''; // 最後の不完全な行を保持
+      
+      for (const line of lines) {
+        if (!line.trim() || line.trim() === 'data: [DONE]') continue;
+        
+        try {
+          const jsonLine = line.replace(/^data: /, '').trim();
+          
+          if (!jsonLine) continue;
+          
+          const data = JSON.parse(jsonLine);
+          
+          if (data.choices && data.choices.length > 0) {
+            const content = data.choices[0].delta?.content;
+            
+            if (content) {
+              yield content;
+            }
+          }
+        } catch (e) {
+          console.warn('Error parsing JSON from stream:', e);
+          // 不完全なJSONでもエラーにせず継続
+        }
+      }
+    }
+    
+    // 接続をクリーンアップ
+    reader.releaseLock();
   } catch (error) {
-    console.error('Error in generateStreamingCompletion:', error);
-    const errorMessage = error instanceof Error 
-      ? error.message 
-      : '不明なエラーが発生しました';
-    yield `申し訳ありません。リクエストの処理中にエラーが発生しました: ${errorMessage}`;
+    console.error('Error in streaming completion:', error);
+    throw error;
+  }
+}
+
+/**
+ * サーバーとの接続をテストする
+ * より厳密なサーバー接続テストを実行
+ */
+export async function testServerConnection(): Promise<{
+  success: boolean;
+  status: 'running' | 'initializing' | 'unavailable';
+  message: string;
+}> {
+  try {
+    // 複数エンドポイントで試行
+    const endpoints = [
+      '/health',
+      '/model',
+      '/',
+    ];
+    
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(`${DEFAULT_SERVER_URL}${endpoint}`, {
+          method: 'GET',
+          timeout: 3000
+        });
+        
+        if (response.ok) {
+          return {
+            success: true,
+            status: 'running',
+            message: `Server is running and responded to ${endpoint}`
+          };
+        } else if (response.status === 503) {
+          return {
+            success: true,
+            status: 'initializing',
+            message: `Server is initializing (status 503) on ${endpoint}`
+          };
+        }
+      } catch (error) {
+        // このエンドポイントのエラーは無視して次を試す
+        console.warn(`Error testing endpoint ${endpoint}:`, error);
+      }
+    }
+    
+    return {
+      success: false,
+      status: 'unavailable',
+      message: 'Could not connect to any server endpoint'
+    };
+  } catch (error) {
+    console.error('Error testing server connection:', error);
+    return {
+      success: false,
+      status: 'unavailable',
+      message: error instanceof Error ? error.message : String(error)
+    };
   }
 }
