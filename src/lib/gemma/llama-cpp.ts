@@ -82,7 +82,7 @@ function findAvailableBinary(): string {
 // デフォルト設定
 export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
   binaryPath: findAvailableBinary(),
-  modelPath: path.join(process.cwd(), 'models/gemma-3-27b-it-Q6_K.gguf'),
+  modelPath: path.join(process.cwd(), 'models/gemma-3-12b-it-Q8_0.gguf'),
   contextSize: 4096,
   batchSize: 512,
   threads: Math.max(1, Math.floor(os.cpus().length * 0.75)), // CPUコア数の75%
