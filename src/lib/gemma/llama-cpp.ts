@@ -257,7 +257,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       '-b', currentConfig.batchSize.toString(),
       '-t', currentConfig.threads.toString(),
       '-ngl', currentConfig.gpuLayers.toString(),
-      '-host', currentConfig.serverAddress,
+      '--host', currentConfig.serverAddress,
       '-p', currentConfig.serverPort.toString(),
       '--mlock', // メモリをロックして強制スワップを防止
       '--log-format', 'json'
