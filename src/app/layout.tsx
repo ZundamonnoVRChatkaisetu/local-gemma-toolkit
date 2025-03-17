@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Local Gemma Toolkit',
-  description: 'Toolkit utilizing Gemma 27B (6B quantized) for local LLM applications',
+  description: 'ローカルマシン上でGemma 12B (Q8_0量子化)を使用するためのツールキット',
 };
 
 export default function RootLayout({
@@ -16,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="ja">
       <body className={inter.className}>
         <MainLayout>
           {children}
