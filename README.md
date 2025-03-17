@@ -73,6 +73,15 @@ npm run dev
 3. **自動検出**: アプリケーション起動時に`models`ディレクトリがスキャンされ、利用可能なモデルが自動的に検出されます
 4. **デフォルト選択**: 複数のモデルがある場合、最大サイズのモデルが自動的にデフォルトとして選択されます
 
+## 最新の更新（2025-03-17）
+
+### チャット機能の改善
+- ストリーミングレスポンスの修正
+- エラーハンドリングの強化
+- 応答生成時のキャンセル機能の追加
+- JSON応答の解析エラーを解決
+- 終了トークン（`<end_of_turn>`）処理の修正
+
 ## トラブルシューティング
 
 ### npm installでエラーが発生する場合
@@ -93,7 +102,7 @@ npm error notarget No matching version found for typescript-eslint@^5.59.0.
 ### llama-serverが見つからないエラー
 
 ```
-llama.cpp binary not found or not executable at bin\llama-server.exe
+llama.cpp binary not found or not executable at bin\\llama-server.exe
 ```
 
 1. `bin`ディレクトリが存在することを確認
@@ -111,6 +120,12 @@ Model file not found or not readable at /path/to/model.gguf
 2. `models`ディレクトリに`.gguf`または`.bin`拡張子のモデルファイルが存在することを確認
 3. ファイルの読み取り権限があることを確認
 4. モデル名の設定が正しいことを確認（デフォルトは`gemma-3-27b-it-Q6_K.gguf`）
+
+### チャット機能でエラーが発生する場合
+
+1. ブラウザの開発者コンソールでエラーを確認してください
+2. APIレスポンスが異常な形式であるか、応答パーシングに問題がある可能性があります
+3. ストリーミングモードの切り替えを試してみてください（現在はストリーミングが推奨されています）
 
 ### 言語設定
 
