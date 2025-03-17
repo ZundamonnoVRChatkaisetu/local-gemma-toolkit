@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./local-gemma.db"
+}
+
+// チャット履歴管理モデル
+model Conversation {
+  id        String   @id @default(uuid())
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  content        String
+  role           String       // "user" or "assistant"
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+}
+
+// DeepSearch用ドキュメント管理モデル
+model Document {
+  id          String       @id @default(uuid())
+  title       String
+  content     String
+  filePath    String?
+  mimeType    String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  embeddings  Embedding[]
+}
+
+model Embedding {
+  id          String       @id @default(uuid())
+  documentId  String
+  document    Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex  Int
+  chunkText   String
+  vector      String       // 埋め込みベクトルをJSON文字列として保存
+  createdAt   DateTime     @default(now())
+}
+
+// 学習支援プラットフォーム用モデル
+model LearningSession {
+  id          String       @id @default(uuid())
+  title       String
+  subject     String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  records     LearningRecord[]
+}
+
+model LearningRecord {
+  id              String           @id @default(uuid())
+  sessionId       String
+  session         LearningSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question        String
+  answer          String
+  userAnswer      String?
+  isCorrect       Boolean?
+  difficulty      Int              // 1-10の難易度
+  createdAt       DateTime         @default(now())
+}
+
+// セキュリティ監視用モデル
+model SecurityAlert {
+  id          String    @id @default(uuid())
+  severity    String    // "low", "medium", "high", "critical"
+  sourceType  String    // "behavior", "code", "system"
+  description String
+  rawData     String?   // 関連する生データ
+  resolved    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+}
+
+// システム設定
+model SystemConfig {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  value       String
+  description String?
+}
