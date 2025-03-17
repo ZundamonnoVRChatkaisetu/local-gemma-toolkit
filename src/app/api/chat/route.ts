@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateCompletion, streamCompletion, Message, initializeLLM } from '@/lib/gemma';
-import { isLlamaServerRunning } from '@/lib/gemma/llama-cpp';
+import { isLlamaServerRunning, isCorsEnabled } from '@/lib/gemma/llama-cpp';
 import { pingLlamaServer } from '@/lib/gemma/llama-client';
 import prisma from '@/lib/prisma/client';
 import fetch from 'node-fetch';
@@ -374,8 +374,12 @@ export async function GET(req: NextRequest) {
     let serverResponding = false;
     let serverStatus = 'stopped';
     let serverMessage = '';
+    let corsEnabled = false;
     
     try {
+      // CORSステータスを確認
+      corsEnabled = isCorsEnabled();
+      
       // 直接エンドポイントにリクエストを送信
       const response = await fetch('http://127.0.0.1:8080/health', {
         method: 'GET',
@@ -428,6 +432,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ 
       status: serverStatus,
       message: serverMessage,
+      corsEnabled: corsEnabled,
       timestamp: new Date().toISOString() 
     });
   } catch (error) {
