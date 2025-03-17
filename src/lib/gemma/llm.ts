@@ -10,6 +10,7 @@ import {
   detectGpuCapabilities,
   LlamaCppConfig,
   DEFAULT_LLAMA_CONFIG,
+  startLlamaServerWithRetry,
 } from './llama-cpp';
 
 import {
@@ -67,8 +68,8 @@ export async function initializeLLM(config?: Partial<LlamaCppConfig>): Promise<b
       };
     }
     
-    // LLMサーバーを起動
-    const started = await startLlamaServer(config);
+    // LLMサーバーを起動（コマンドラインオプションエラーに対応した再試行機能付き）
+    const started = await startLlamaServerWithRetry(3);
     if (!started) {
       throw new Error('Failed to start LLM server');
     }
