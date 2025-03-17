@@ -251,14 +251,15 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     }
     
     // llama-serverコマンドの構築
+    // 全てのオプションをダブルハイフン形式に統一
     const serverArgs = [
-      '-m', currentConfig.modelPath,
-      '-c', currentConfig.contextSize.toString(),
-      '-b', currentConfig.batchSize.toString(),
-      '-t', currentConfig.threads.toString(),
-      '-ngl', currentConfig.gpuLayers.toString(),
+      '--model', currentConfig.modelPath,
+      '--ctx-size', currentConfig.contextSize.toString(),
+      '--batch-size', currentConfig.batchSize.toString(),
+      '--threads', currentConfig.threads.toString(),
+      '--n-gpu-layers', currentConfig.gpuLayers.toString(),
       '--host', currentConfig.serverAddress,
-      '-p', currentConfig.serverPort.toString(),
+      '--port', currentConfig.serverPort.toString(),
       '--mlock', // メモリをロックして強制スワップを防止
       '--log-format', 'json'
     ];
