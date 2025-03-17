@@ -6,9 +6,7 @@ import fetch from 'node-fetch';
 import { getLlamaServerEndpoint, LlamaCompletionParams, isLlamaServerRunning } from './llama-cpp';
 import { Message } from '.';
 
-// node-fetchのAbortController互換性の問題を解決するためのポリフィル
-// @ts-ignore
-global.AbortController = global.AbortController || require('abort-controller');
+// AbortControllerポリフィルを削除（Next.jsは組み込みのAbortControllerを使用）
 
 // レスポンス型定義
 interface LlamaCompletionResponse {
@@ -40,18 +38,11 @@ export async function pingLlamaServer(maxRetries = 3, retryInterval = 1000): Pro
         // 直接エンドポイントを構築（getLlamaServerEndpointを使わない）
         const endpoint = `http://127.0.0.1:8080/health`;
         
-        // リクエストタイムアウトを設定
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2000);
-        
         try {
           const response = await fetch(endpoint, { 
-            signal: controller.signal,
-            // @ts-ignore
+            // タイムアウトを追加
             timeout: 2000
           });
-          
-          clearTimeout(timeout);
           
           if (response.ok) {
             console.log('llama-server is responding to health checks');
@@ -59,23 +50,14 @@ export async function pingLlamaServer(maxRetries = 3, retryInterval = 1000): Pro
           }
         } catch (fetchError) {
           console.log(`Fetch error: ${fetchError.message}`);
-        } finally {
-          clearTimeout(timeout);
         }
         
         // モデルエンドポイントも試してみる
         try {
           const modelEndpoint = `http://127.0.0.1:8080/model`;
-          const modelController = new AbortController();
-          const modelTimeout = setTimeout(() => modelController.abort(), 2000);
-          
           const modelResponse = await fetch(modelEndpoint, { 
-            signal: modelController.signal,
-            // @ts-ignore
             timeout: 2000
           });
-          
-          clearTimeout(modelTimeout);
           
           if (modelResponse.ok) {
             console.log('llama-server is responding to model endpoint');
@@ -135,10 +117,6 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
     // 明示的なエンドポイント指定
     const endpoint = `http://127.0.0.1:8080/completion`;
     
-    // timeoutを追加
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    
     try {
       console.log('Sending completion request to llama-server...');
       
@@ -148,10 +126,8 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(params),
-        signal: controller.signal,
+        timeout: 30000
       });
-      
-      clearTimeout(timeout);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -164,12 +140,7 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
       
       return data.content || '応答内容がありませんでした。もう一度お試しください。';
     } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error('リクエストがタイムアウトしました');
-      }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   } catch (error) {
     console.error('Error sending completion request:', error);
@@ -201,10 +172,6 @@ export async function* sendStreamingCompletionRequest(
       stream: true,
     };
     
-    // 30秒のタイムアウトを設定
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    
     try {
       console.log('Sending streaming request to llama-server...');
       
@@ -214,10 +181,8 @@ export async function* sendStreamingCompletionRequest(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestParams),
-        signal: controller.signal,
+        timeout: 30000
       });
-      
-      clearTimeout(timeout);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -314,12 +279,7 @@ export async function* sendStreamingCompletionRequest(
         reader.releaseLock();
       }
     } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error('リクエストがタイムアウトしました');
-      }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   } catch (error) {
     console.error('Error sending streaming completion request:', error);
@@ -344,17 +304,11 @@ export async function getModelInfo(): Promise<{
     // 明示的なエンドポイント指定
     const endpoint = `http://127.0.0.1:8080/model`;
     
-    // タイムアウト設定
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    
     try {
       const response = await fetch(endpoint, {
         method: 'GET',
-        signal: controller.signal,
+        timeout: 5000
       });
-      
-      clearTimeout(timeout);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -363,12 +317,7 @@ export async function getModelInfo(): Promise<{
       
       return await response.json();
     } catch (error) {
-      if (error.name === 'AbortError') {
-        throw new Error('モデル情報の取得がタイムアウトしました');
-      }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   } catch (error) {
     console.error('Error fetching model info:', error);
