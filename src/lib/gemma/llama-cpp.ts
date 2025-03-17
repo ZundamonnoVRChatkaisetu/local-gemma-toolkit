@@ -32,6 +32,8 @@ export interface LlamaCppConfig {
   serverPort: number;
   // サーバー起動タイムアウト（ミリ秒）
   startTimeout: number;
+  // CORSを有効にするかどうか
+  enableCors: boolean;
 }
 
 // 利用可能な実行ファイルを自動検出
@@ -87,7 +89,8 @@ export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
   gpuLayers: 0, // デフォルトではGPU無効
   serverAddress: '127.0.0.1',
   serverPort: 8080,
-  startTimeout: 300000 // 5分（大きなモデル用に延長）
+  startTimeout: 300000, // 5分（大きなモデル用に延長）
+  enableCors: true, // CORSをデフォルトで有効化
 };
 
 // llama-serverプロセスの状態管理
@@ -266,6 +269,12 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       '--mlock' // メモリをロックして強制スワップを防止
     ];
     
+    // CORSオプションを追加（有効な場合）
+    if (currentConfig.enableCors) {
+      serverArgs.push('--cors', '*');
+      console.log('CORS is enabled for llama-server, allowing browser direct access');
+    }
+    
     console.log(`Starting llama-server with command: ${currentConfig.binaryPath} ${serverArgs.join(' ')}`);
     
     // サーバープロセスを起動
@@ -388,6 +397,14 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     
     isServerRunning = true;
     console.log(`llama-server started successfully on ${currentConfig.serverAddress}:${currentConfig.serverPort}`);
+    
+    // CORSが有効化されているかどうかを通知
+    if (currentConfig.enableCors) {
+      console.log(`CORS is enabled. Browser clients can directly access llama-server at http://${currentConfig.serverAddress}:${currentConfig.serverPort}`);
+    } else {
+      console.log(`CORS is disabled. Browser clients must use the API proxy.`);
+    }
+    
     return true;
   } catch (error) {
     console.error('Error starting llama-server:', error);
@@ -453,6 +470,13 @@ export function isLlamaServerRunning(): boolean {
  */
 export function getLlamaServerEndpoint(): string {
   return `http://${currentConfig.serverAddress}:${currentConfig.serverPort}`;
+}
+
+/**
+ * llama-serverのCORS設定状態を取得
+ */
+export function isCorsEnabled(): boolean {
+  return currentConfig.enableCors;
 }
 
 /**
