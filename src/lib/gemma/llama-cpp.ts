@@ -35,7 +35,7 @@ export interface LlamaCppConfig {
 // デフォルト設定
 export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
   binaryPath: process.platform === 'win32' ? 'bin\\llama-server.exe' : './bin/llama-server',
-  modelPath: path.join(process.cwd(), 'models/gemma-27b-6b-q4_0.gguf'),
+  modelPath: path.join(process.cwd(), 'models/gemma-3-27b-it-Q6_K.gguf'),
   contextSize: 4096,
   batchSize: 512,
   threads: Math.max(1, Math.floor(os.cpus().length * 0.75)), // CPUコア数の75%
@@ -71,6 +71,34 @@ export async function checkModelFile(config: LlamaCppConfig = currentConfig): Pr
     return true;
   } catch (error) {
     console.error(`Model file not found or not readable at ${config.modelPath}`);
+    
+    // モデルディレクトリ内の利用可能なモデルを検索
+    try {
+      const modelsDir = path.join(process.cwd(), 'models');
+      const files = await fs.promises.readdir(modelsDir);
+      
+      // .ggufまたは.binファイルを探す
+      const modelFiles = files.filter(file => file.endsWith('.gguf') || file.endsWith('.bin'));
+      
+      if (modelFiles.length > 0) {
+        console.log('Available model files:');
+        modelFiles.forEach(file => console.log(`- ${file}`));
+        
+        // 最初のモデルファイルを使用
+        const firstModel = path.join(modelsDir, modelFiles[0]);
+        console.log(`Will try to use: ${firstModel}`);
+        
+        // 設定を更新
+        currentConfig.modelPath = firstModel;
+        
+        // 再度チェック
+        await fs.promises.access(firstModel, fs.constants.R_OK);
+        return true;
+      }
+    } catch (err) {
+      console.error('Error searching for model files:', err);
+    }
+    
     return false;
   }
 }
