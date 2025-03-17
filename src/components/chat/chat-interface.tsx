@@ -98,16 +98,20 @@ export function ChatInterface({
     }
 
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder('utf-8');
     let responseText = '';
     let lastUpdate = Date.now();
     const UPDATE_INTERVAL = 50; // ms
+    let receivedAnyData = false;
 
     try {
+      console.log('🔵 [ChatInterface] Starting to read stream...');
+      
       while (true) {
         const { done, value } = await reader.read();
         
         if (done) {
+          console.log('🔵 [ChatInterface] Stream reading complete.');
           // 最終アップデート
           if (responseText.trim()) {
             setStreamedContent(responseText);
@@ -115,23 +119,38 @@ export function ChatInterface({
           break;
         }
 
+        // データを受信したことをマーク
+        receivedAnyData = true;
+        
+        // UTF-8でチャンクをデコード
         const chunk = decoder.decode(value, { stream: true });
+        console.log(`🔵 [ChatInterface] Received chunk of length: ${chunk.length}`);
+        console.log(`🔵 [ChatInterface] Chunk preview: ${chunk.slice(0, 50)}${chunk.length > 50 ? '...' : ''}`);
+        
         responseText += chunk;
         
         // 一定間隔でのみUIを更新（パフォーマンス最適化）
         const now = Date.now();
         if (now - lastUpdate > UPDATE_INTERVAL) {
+          console.log(`🔵 [ChatInterface] Updating UI with content of length: ${responseText.length}`);
           setStreamedContent(responseText);
           lastUpdate = now;
         }
       }
 
+      // データが受信されたか確認
+      if (!receivedAnyData) {
+        console.error('🔴 [ChatInterface] No data received from the stream!');
+        throw new Error('ストリームからデータが受信されませんでした');
+      }
+
       return responseText;
     } catch (error) {
-      console.error('ストリーミングの読み取り中にエラーが発生しました:', error);
+      console.error('🔴 [ChatInterface] Error reading stream:', error);
       throw error;
     } finally {
       reader.releaseLock();
+      console.log('🔵 [ChatInterface] Stream reader released');
     }
   };
 
@@ -162,6 +181,20 @@ export function ChatInterface({
 
     try {
       console.log(`🔵 [ChatInterface] Sending POST request to /api/chat...`);
+      console.log(`🔵 [ChatInterface] Request payload:`, {
+        messages: [...messages, userMessage],
+        conversationId,
+        stream: true,
+      });
+      
+      // リクエストタイムアウトを60秒に設定
+      const timeoutId = setTimeout(() => {
+        if (abortControllerRef.current) {
+          console.log('🔴 [ChatInterface] Request timeout, aborting');
+          abortControllerRef.current.abort();
+          setError('リクエストがタイムアウトしました。サーバーが応答していません。');
+        }
+      }, 60000);
       
       // ストリーミングモードでAPIを呼び出す
       const response = await fetch('/api/chat', {
@@ -176,8 +209,12 @@ export function ChatInterface({
         }),
         signal,
       });
+      
+      // タイムアウトをクリア
+      clearTimeout(timeoutId);
 
       console.log(`🔵 [ChatInterface] Received response with status: ${response.status}`);
+      console.log(`🔵 [ChatInterface] Response headers:`, Object.fromEntries([...response.headers]));
 
       if (!response.ok) {
         // エラーレスポンスを処理
@@ -204,6 +241,7 @@ export function ChatInterface({
         ]);
       } else {
         // 空のレスポンスの場合、エラーメッセージを表示
+        console.error('🔴 [ChatInterface] Empty response received');
         setError('応答が空でした。サーバーの状態を確認してください。');
         setMessages((prev) => [
           ...prev,
@@ -220,13 +258,13 @@ export function ChatInterface({
         return;
       }
 
-      console.error('メッセージ送信エラー:', error);
+      console.error('🔴 [ChatInterface] Message submission error:', error);
       
       const errorMessage = error instanceof Error 
         ? error.message 
         : '不明なエラーが発生しました';
       
-      setError(errorMessage);
+      setError(`エラー: ${errorMessage}`);
       
       // エラーメッセージをアシスタントメッセージとして表示
       setMessages((prev) => [
@@ -345,6 +383,24 @@ export function ChatInterface({
             <p className="text-sm text-blue-700">
               llama-serverがCORSをサポートしていないため、常にAPIルート経由で通信しています。これは通常の動作であり、エラーではありません。
             </p>
+          </div>
+        </div>
+        
+        {/* トラブルシューティング情報 */}
+        <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
+          <div className="flex">
+            <AlertCircle className="h-5 w-5 text-yellow-500 mr-2 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm text-yellow-700 font-medium">
+                チャットが応答しない場合の対処法:
+              </p>
+              <ul className="text-sm text-yellow-700 list-disc pl-5 mt-1">
+                <li>数分待ってからもう一度送信してみてください（初回は特に時間がかかります）</li>
+                <li>「こんにちは」など短い質問から始めてみてください</li>
+                <li>画面を更新してから再度試してみてください</li>
+                <li>サーバーの再起動が必要かもしれません</li>
+              </ul>
+            </div>
           </div>
         </div>
         
