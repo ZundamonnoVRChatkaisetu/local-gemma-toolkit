@@ -8,13 +8,19 @@ interface ChatInputProps {
   onSubmit: (message: string) => void;
   onCancel?: () => void;
   isLoading?: boolean;
+  disabled?: boolean;
 }
 
-export function ChatInput({ onSubmit, onCancel, isLoading = false }: ChatInputProps) {
+export function ChatInput({ 
+  onSubmit, 
+  onCancel, 
+  isLoading = false,
+  disabled = false
+}: ChatInputProps) {
   const [input, setInput] = useState('');
 
   const handleSubmit = () => {
-    if (input.trim() && !isLoading) {
+    if (input.trim() && !isLoading && !disabled) {
       onSubmit(input.trim());
       setInput('');
     }
@@ -33,9 +39,13 @@ export function ChatInput({ onSubmit, onCancel, isLoading = false }: ChatInputPr
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="メッセージを入力してください..."
+        placeholder={
+          disabled 
+            ? "LLMサーバーが起動するまでお待ちください..." 
+            : "メッセージを入力してください..."
+        }
         className="flex-1 resize-none min-h-[60px] max-h-[200px]"
-        disabled={isLoading}
+        disabled={isLoading || disabled}
       />
       
       {isLoading && onCancel ? (
@@ -50,7 +60,7 @@ export function ChatInput({ onSubmit, onCancel, isLoading = false }: ChatInputPr
       ) : (
         <Button 
           onClick={handleSubmit} 
-          disabled={isLoading || !input.trim()}
+          disabled={isLoading || !input.trim() || disabled}
         >
           送信
         </Button>
