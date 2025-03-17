@@ -303,6 +303,8 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       let startTimeout: NodeJS.Timeout;
       let lastOutput = '';
       let serverStartDetected = false;
+      let modelLoadedDetected = false;
+      let slotsReadyDetected = false;
       
       // 標準出力を監視してサーバー起動を検出
       const onStdout = (data: Buffer) => {
@@ -323,11 +325,32 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
         
         // モデル読み込み完了を検出
         if (
-          (output.includes('model loaded') && serverStartDetected) ||
-          (output.includes('all slots are idle') && serverStartDetected) ||
-          (output.includes('starting the main loop') && serverStartDetected)
+          output.includes('model loaded') || 
+          output.includes('main: model loaded')
         ) {
+          modelLoadedDetected = true;
           console.log('[llama-server] Model loading completed');
+        }
+        
+        // スロット準備完了を検出
+        if (
+          output.includes('all slots are idle') || 
+          output.includes('update_slots: all slots are idle') ||
+          output.includes('main loop') ||
+          output.includes('starting the main loop')
+        ) {
+          slotsReadyDetected = true;
+          console.log('[llama-server] Slots are ready');
+        }
+        
+        // 完全な起動状態を検出
+        if (
+          (serverStartDetected && modelLoadedDetected) || 
+          (serverStartDetected && slotsReadyDetected) ||
+          (output.includes('model loaded') && output.includes('main: server is listening')) ||
+          (output.includes('all slots are idle'))
+        ) {
+          console.log('[llama-server] Server is fully initialized');
           serverProcess?.stdout?.removeListener('data', onStdout);
           clearTimeout(startTimeout);
           resolve();
@@ -340,8 +363,8 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
       startTimeout = setTimeout(() => {
         serverProcess?.stdout?.removeListener('data', onStdout);
         
-        // サーバーが起動しているが明示的な完了メッセージがない場合を考慮
-        if (serverStartDetected) {
+        // サーバーが起動している可能性が高い場合は続行
+        if (serverStartDetected || modelLoadedDetected || slotsReadyDetected) {
           console.log('[llama-server] Server appears to be running, continuing despite no explicit completion message');
           resolve();
         } else {
