@@ -194,7 +194,7 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
 
 /**
  * llama.cppサーバーにストリーミングリクエストを送信
- * エラーハンドリングを改善
+ * ストリーミング処理を修正して応答が確実に返るように改善
  */
 export async function* sendStreamingCompletionRequest(
   params: LlamaCompletionParams
@@ -237,7 +237,8 @@ export async function* sendStreamingCompletionRequest(
           const reader = response.body?.getReader();
           if (!reader) throw new Error('Failed to get reader from response');
           
-          const decoder = new TextDecoder();
+          // TextDecoderを正しい設定で初期化
+          const decoder = new TextDecoder('utf-8');
           let buffer = '';
           let receivedSomething = false;
           
@@ -246,68 +247,90 @@ export async function* sendStreamingCompletionRequest(
           try {
             while (true) {
               const { done, value } = await reader.read();
+              
+              // ストリームが終了した場合
               if (done) {
                 console.log('Stream reading complete.');
+                
+                // バッファに残っているデータがあれば処理
+                if (buffer.trim()) {
+                  try {
+                    const data = JSON.parse(buffer) as LlamaStreamChunk;
+                    if (data.content) {
+                      yield data.content;
+                    }
+                  } catch (e) {
+                    // 最後のJSONが不完全な場合はプレーンテキストとして扱う
+                    if (buffer.trim()) {
+                      yield buffer.trim();
+                    }
+                  }
+                }
+                
                 break;
               }
               
               // 何かデータを受信した
               receivedSomething = true;
               
-              // 受信したデータをデコード
+              // バイナリデータをテキストにデコード（ストリーム処理を明示）
               const chunk = decoder.decode(value, { stream: true });
               console.log(`Received chunk: ${chunk.length} bytes`);
               
+              // バッファに追加
               buffer += chunk;
               
               // JSONライン形式でデータが送られてくるため、行ごとに処理
               const lines = buffer.split('\n');
-              buffer = lines.pop() || ''; // 最後の不完全な行をバッファに残す
               
+              // 最後の行（不完全な可能性がある）をバッファに残す
+              buffer = lines.pop() || '';
+              
+              // 各行を個別に処理
               for (const line of lines) {
                 if (!line.trim()) continue;
                 
                 try {
-                  // エラー発生時のロギングを追加
+                  // 正常なJSONとしてパース
                   const data = JSON.parse(line) as LlamaStreamChunk;
                   
-                  // エラーチェックを追加
+                  // エラーチェック
                   if (data.error) {
                     console.error(`Stream error: ${data.error}`);
                     throw new Error(data.error);
                   }
                   
+                  // コンテンツを処理
                   if (data.content) {
                     yield data.content;
                   }
                   
+                  // 停止フラグ
                   if (data.stop) {
+                    console.log('Stop flag received, ending stream');
                     return;
                   }
-                } catch (e) {
-                  // JSONパース失敗時のエラーハンドリングを改善
+                } catch (parseError) {
+                  // JSONパース失敗時の処理を改善
                   console.warn('Failed to parse JSON chunk:', line);
-                  try {
-                    // 一部のエラーレスポンスが特殊なフォーマットである可能性があるため再試行
-                    if (line.includes('error') || line.includes('Error')) {
-                      const errorMatch = line.match(/\"error\":\\s*\"([^\"]*)\"/i);
-                      if (errorMatch && errorMatch[1]) {
-                        throw new Error(`Stream error: ${errorMatch[1]}`);
-                      }
+                  
+                  // エラーメッセージの検出
+                  if (line.includes('error') || line.includes('Error')) {
+                    const errorMatch = line.match(/\"error\":\s*\"([^\"]*)\"/i);
+                    if (errorMatch && errorMatch[1]) {
+                      throw new Error(`Stream error: ${errorMatch[1]}`);
                     }
-                    
-                    // <end_of_turn>トークンの処理を追加
-                    if (line.includes('<end_of_turn>')) {
-                      return;
-                    }
-                    
-                    // プレーンテキストの場合もそのまま返す
-                    if (line.trim() && !line.startsWith('{') && !line.startsWith('[')) {
-                      yield line.trim();
-                    }
-                  } catch (innerError) {
-                    console.error('Error processing stream chunk:', innerError);
-                    throw innerError;
+                  }
+                  
+                  // 終了トークンの処理
+                  if (line.includes('<end_of_turn>')) {
+                    console.log('End of turn token found, ending stream');
+                    return;
+                  }
+                  
+                  // JSON形式でないコンテンツの処理
+                  if (line.trim() && !line.startsWith('{') && !line.startsWith('[')) {
+                    yield line.trim();
                   }
                 }
               }
@@ -319,10 +342,13 @@ export async function* sendStreamingCompletionRequest(
               throw new Error('No data received from the server');
             }
           } finally {
+            // リーダーのロックを解放
             reader.releaseLock();
+            console.log('Stream reader released');
           }
           
           // 正常終了の場合はループを抜ける
+          console.log('Stream processing completed successfully');
           break;
         } else if (response.status === 503) {
           // 503はサーバーがまだ初期化中である可能性がある
@@ -331,22 +357,27 @@ export async function* sendStreamingCompletionRequest(
           await new Promise(resolve => setTimeout(resolve, 2000));
           retries++;
         } else {
+          // その他のエラーステータス
           const errorText = await response.text();
           console.error(`Server response error: ${response.status} ${errorText}`);
           throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
         }
       } catch (error) {
+        // 接続拒否エラーの処理
         if (error.code === 'ECONNREFUSED') {
           console.log('Connection refused, server might be still starting up...');
           yield 'サーバーとの接続を確立しています、しばらくお待ちください...';
           await new Promise(resolve => setTimeout(resolve, 2000));
           retries++;
         } else {
+          // その他のエラー
+          console.error('Error in streaming request:', error);
           throw error;
         }
       }
     }
     
+    // リトライ上限に達した場合
     if (retries >= maxRetries) {
       throw new Error('最大再試行回数に達しました。サーバーが応答していません。');
     }
