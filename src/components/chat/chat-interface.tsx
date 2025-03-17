@@ -65,7 +65,7 @@ export function ChatInterface({
         ...prev.slice(0, prev.length - 1),
         { 
           role: 'assistant', 
-          content: 'Sorry, there was an error processing your request. Please try again.' 
+          content: '申し訳ありません。リクエストの処理中にエラーが発生しました。もう一度お試しください。' 
         },
       ]);
     } finally {
