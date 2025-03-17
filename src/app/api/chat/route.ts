@@ -111,7 +111,6 @@ export async function POST(req: NextRequest) {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(llamaRequest),
-                // @ts-ignore
                 timeout: 10000
               });
               
@@ -260,7 +259,6 @@ export async function POST(req: NextRequest) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(llamaRequest),
-          // @ts-ignore
           timeout: 30000
         });
         
@@ -326,7 +324,6 @@ export async function GET(req: NextRequest) {
       // 直接エンドポイントにリクエストを送信
       const response = await fetch('http://127.0.0.1:8080/health', {
         method: 'GET',
-        // @ts-ignore
         timeout: 2000
       });
       
@@ -336,7 +333,6 @@ export async function GET(req: NextRequest) {
         // モデルエンドポイントも試す
         const modelResponse = await fetch('http://127.0.0.1:8080/model', {
           method: 'GET',
-          // @ts-ignore
           timeout: 2000
         });
         
