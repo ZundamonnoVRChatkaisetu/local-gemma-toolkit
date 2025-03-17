@@ -12,11 +12,11 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: 'Home', href: '/', icon: '🏠' },
-  { label: 'Chat', href: '/chat', icon: '💬' },
-  { label: 'DeepSearch', href: '/search', icon: '🔍' },
-  { label: 'Learning', href: '/learn', icon: '📚' },
-  { label: 'Security', href: '/security', icon: '🔒' },
+  { label: 'ホーム', href: '/', icon: '🏠' },
+  { label: 'チャット', href: '/chat', icon: '💬' },
+  { label: '詳細検索', href: '/search', icon: '🔍' },
+  { label: '学習支援', href: '/learn', icon: '📚' },
+  { label: 'セキュリティ', href: '/security', icon: '🔒' },
 ];
 
 export function MainNav() {
