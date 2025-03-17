@@ -102,9 +102,6 @@ export function ChatInterface({
         }
       }).join('') + '<start_of_turn>model\n';
       
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
-      
       try {
         const response = await fetch('http://127.0.0.1:8080/completion', {
           method: 'POST',
@@ -120,10 +117,7 @@ export function ChatInterface({
             stop: ['<end_of_turn>'],
             stream: true
           }),
-          signal: controller.signal,
         });
-        
-        clearTimeout(timeout);
         
         if (!response.ok) {
           console.warn('Direct server communication failed');
@@ -186,7 +180,6 @@ export function ChatInterface({
         return true;
       } catch (error) {
         console.error('Error in direct API call:', error);
-        clearTimeout(timeout);
         return false;
       }
     } catch (error) {
