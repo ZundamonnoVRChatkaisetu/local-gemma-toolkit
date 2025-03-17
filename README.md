@@ -1,222 +1,126 @@
 # Local Gemma Toolkit
 
-プライバシーを重視した、ローカル環境で動作するGemma 12B（Q8_0量子化）を活用したAIツールキット。オフライン環境で高機能なAI機能を提供します。
+ローカル環境でGemma LLMを実行するためのWebベースGUIツールキット
 
-## 機能概要
+## 概要
 
-### 1. ローカルLLMチャット
-- Claudeのようなストリーミング応答
-- コンテキスト対応の対話機能
-- プライバシー保護（すべてのデータがローカルに保存）
+Gemma 12Bモデルをローカルマシン上で簡単に実行し、チャット・検索・学習支援などの機能を提供するオールインワンパッケージです。
 
-### 2. DeepSearch
-- ローカル文書のベクトル検索
-- コンテキストを考慮した回答生成
-- OpenManusに着想を得た検索拡張生成(RAG)
+このツールキットは、llama.cpp/GGUFエコシステムを活用して、コンシューマーグレードのハードウェアでも高性能な推論を実現します。
 
-### 3. プライバシー保護型学習支援
-- 学習履歴のローカル保存と分析
-- パターン認識によるカスタム問題生成
-- 進捗追跡とレコメンデーション
+## 主な機能
 
-### 4. AI駆動型セキュリティ管理
-- 行動パターン分析による異常検知
-- コード・バイナリ解析
-- リアルタイムアラート
+- **チャットインターフェース**: 自然な会話でGemmaモデルとやり取り
+- **DeepSearch**: ローカルドキュメントやウェブコンテンツの検索機能
+- **学習支援**: コンセプトの説明や課題の解決をサポート
+- **パフォーマンス最適化**: GPU/CPUに対応した効率的な推論エンジン
+- **セキュリティ**: すべてがローカルで実行され、データは外部に送信されません
 
-## 技術スタック
+## 必要システム要件
 
-- **フロントエンド**: Next.js, React, Tailwind CSS, shadcn/ui
-- **バックエンド**: Node.js
-- **データベース**: SQLite + Prisma
-- **AI**: Gemma 12B (Q8_0量子化)
-- **ベクトルDB**: SQLite拡張またはベクトル検索対応ライブラリ
-
-## インストール方法
-
-```bash
-# リポジトリのクローン
-git clone https://github.com/ZundamonnoVRChatkaisetu/local-gemma-toolkit.git
-cd local-gemma-toolkit
-
-# 依存関係のインストール
-npm install
-
-# データベースのセットアップ
-npm run db:setup
-
-# 開発サーバーの起動
-npm run dev
-```
+- **OS**: Windows 10/11, macOS, Linux
+- **RAM**: 最低16GB (32GB推奨)
+- **ストレージ**: 40GB以上の空き容量
+- **GPU**: NVIDIA GPU 8GB VRAM以上 (オプション、ただし推奨)
+- **CPU**: 6コア以上 (GPUがない場合は8コア以上推奨)
 
 ## セットアップ手順
 
-### 1. llama.cppバイナリの設定
+### 1. 前提条件
 
-このプロジェクトではllama.cppのバイナリが必要です：
+- Node.js 20.x以上
+- npm 10.x以上
+- Git
 
-1. `bin`ディレクトリに`llama-server.exe`（Windows）または`llama-server`（Linux/Mac）を配置します
-2. 詳細な入手方法は`bin/README.md`を参照してください
+### 2. リポジトリのクローン
 
-入手方法の選択肢：
-- [llama.cpp公式リポジトリ](https://github.com/ggerganov/llama.cpp)からビルド
-- [公式リリース](https://github.com/ggerganov/llama.cpp/releases)からダウンロード
-- [LM Studio](https://lmstudio.ai/)や[KoboldCpp](https://github.com/LostRuins/koboldcpp)からバイナリを抽出
+```bash
+git clone https://github.com/ZundamonnoVRChatkaisetu/local-gemma-toolkit.git
+cd local-gemma-toolkit
+```
 
-### 2. Gemma 12B (Q8_0量子化)モデルの設定
+### 3. 依存関係のインストール
 
-1. **モデル入手**: LM StudioなどからGemma 12Bモデル（Q8_0量子化版）のGGUFファイルをダウンロード
-2. **モデル配置**: 
-   - プロジェクトのルートディレクトリに`models`フォルダが存在しない場合は作成
-   - ダウンロードしたGGUFファイルを`models`ディレクトリに配置
-   - デフォルトのファイル名: `gemma-3-12b-it-Q8_0.gguf`（変更可能）
-3. **自動検出**: アプリケーション起動時に`models`ディレクトリがスキャンされ、利用可能なモデルが自動的に検出されます
-4. **デフォルト選択**: 複数のモデルがある場合、最大サイズのモデルが自動的にデフォルトとして選択されます
+```bash
+npm install
+```
 
-### 3. モデル変更について（2025-03-17更新）
+### 4. モデルのダウンロード
 
-当初は27B (6B量子化)モデルを使用していましたが、より安定したパフォーマンスを得るために12B (Q8_0量子化)モデルに変更しました。
-現在のデフォルトモデルは`gemma-3-12b-it-Q8_0.gguf`です。
+Gemma 12Bモデルのquantized版（Q8_0.gguf）をダウンロードし、`models`ディレクトリに配置します。
+モデルは「gemma-3-12b-it-Q8_0.gguf」を使用します。
 
-**注意**: モデル変更後、チャット機能に問題が発生している場合があります。この問題は調査中です。
+### 5. llama-serverバイナリの取得
 
-## 最新の更新（2025-03-17）
+以下のいずれかの方法でllama-serverバイナリを取得し、`bin`ディレクトリに配置します。
 
-### モデル変更
-- 使用モデルを「gemma-3-12b-it-Q8_0.gguf」に変更
-- チャット機能の安定性向上のための調整中
+**自動ダウンロード**:
+```bash
+node bin/download-llama-server.js
+```
 
-### サーバー初期化とヘルスチェックの改善
-- サーバー初期化ロジックを強化し、503エラーを適切に処理
-- サーバー起動中状態を検出し、正しくハンドリング
-- ヘルスチェック機能の改善とエラー処理の強化
-- 初期化完了の検出精度向上
-- 通信エラー時の自動再試行機能の実装
+**または手動ダウンロード**:
+1. [llama.cpp リリースページ](https://github.com/ggerganov/llama.cpp/releases) から最新のバイナリをダウンロード
+2. `bin`ディレクトリに配置し、必要に応じて `llama-server` または `llama-server.exe` にリネーム
 
-### チャット機能の改善
-- ストリーミングレスポンスの修正
-- エラーハンドリングの強化
-- 応答生成時のキャンセル機能の追加
-- JSON応答の解析エラーを解決
-- 終了トークン（`<end_of_turn>`）処理の修正
+### 6. アプリケーションの起動
+
+```bash
+npm run dev
+```
+
+ブラウザで http://localhost:3000 にアクセスします。
 
 ## トラブルシューティング
 
-### ブラウザでのCORSエラー（チャット送信できない問題）
+### チャット応答が返ってこない問題
 
-ブラウザのコンソールに以下のようなエラーが表示される場合：
-```
-Access to fetch at 'http://127.0.0.1:8080/completion' from origin 'http://localhost:3000' has been blocked by CORS policy
-```
+通常、この問題は以下のいずれかが原因です：
 
-**解決方法**:
-1. **CORSエラー対策**: 直接APIアクセスがブラウザにブロックされています。以下のいずれかの方法で解決できます：
-   
-   a) **推奨: llama-serverの起動オプション修正**:
-   ```bash
-   # bin/llama-server.exeの起動オプションに--cors '*'を追加
-   bin/llama-server.exe --model models/gemma-3-12b-it-Q8_0.gguf --ctx-size 4096 --batch-size 512 --threads 21 --n-gpu-layers 32 --host 127.0.0.1 --port 8080 --cors '*' --mlock
+1. **モデルの初期化中**: 大きなモデルはロードに時間がかかります。サーバーログで以下のメッセージを確認してください：
    ```
-   
-   b) **代替: API経由での通信に切り替え**:
-   - chat-interface.tsxファイル内の直接APIアクセス（`fetch('http://127.0.0.1:8080/completion'...`）部分をコメントアウトし、Next.js APIルート（`/api/chat`）経由の通信のみを使用
+   llama_context: KV self size = 1536.00 MiB, K (f16): 768.00 MiB, V (f16): 768.00 MiB
+   ```
+   上記のメッセージが表示された後、モデルは使用可能になります。
 
-2. **サーバー再起動**: 上記の設定を適用後、アプリケーションを再起動してください。
+2. **ストリーミング処理の問題**: レスポンスデータのストリーミング処理に問題がある場合があります。この場合は以下を試してください：
+   - ブラウザのリロード
+   - 別のシンプルな質問をしてみる（例：「こんにちは」）
+   - サーバーを再起動（`Ctrl+C`で終了後、再度`npm run dev`）
 
-### サーバー初期化エラー（503 Service Unavailable）
+3. **メモリ不足**: システムメモリが不足している場合、モデルの実行が中断される可能性があります。タスクマネージャーやシステムモニターでメモリ使用量を確認してください。
 
-大規模モデル（例：12B）を使用する場合、初期ロード時に以下のようなエラーが表示されることがあります：
+### CORS (Cross-Origin Resource Sharing) エラー
 
-```
-Error checking llama-server health: FetchError: request to http://127.0.0.1:8080/health failed, reason: connect ECONNREFUSED 127.0.0.1:8080
-```
+ブラウザからllama-serverに直接アクセスする際、CORSエラーが発生する場合があります。
 
-または：
+1. **API経由でのアクセス**: デフォルトではブラウザはNext.jsのAPIルートを経由してllama-serverと通信します。この方法でCORS問題を回避できます。
 
-```
-srv log_server_r: request: GET /health 127.0.0.1 503
-```
+2. **CORSサポートの確認**: 現在のバージョンでは、llama-serverの一部バージョンはCORSをサポートしていません。サーバーが起動する際に以下のメッセージが表示されるか確認してください：
+   ```
+   CORS is not supported by this llama-server version, disabling CORS option
+   ```
 
-**解決方法**:
-1. これはサーバーが起動中で、まだ完全に初期化されていないことを示します。通常は自動的に処理されます。
-2. 大規模モデルでは、数分かかる場合があるのでしばらく待ちます。
-3. コンソールに`main: server is listening on http://127.0.0.1:8080 - starting the main loop`というメッセージが表示されれば、サーバーは正常に起動しています。
-4. このエラーが継続的に表示される場合は、アプリケーションを再起動してみてください。
+## GPUサポート
 
-### npm installでエラーが発生する場合
-
-以下のようなエラーが発生した場合:
-```
-npm error code ETARGET
-npm error notarget No matching version found for typescript-eslint@^5.59.0.
-```
-
-これは依存関係の指定に問題がある可能性があります。最新のリポジトリでは修正されていますが、問題が続く場合は以下の手順を試してください:
-
-1. `package.json`ファイルを開く
-2. `devDependencies`セクションの`typescript-eslint`を確認
-3. 必要に応じて`@typescript-eslint/eslint-plugin`と`@typescript-eslint/parser`に変更
-4. 再度`npm install`を実行
-
-### llama-serverが見つからないエラー
+GGUFモデルはGPUを使用して高速化できます。システムが自動的にGPUを検出し、適切な設定を行います。ログ出力で以下を確認してください：
 
 ```
-llama.cpp binary not found or not executable at bin\\llama-server.exe
+Auto-detected GPU capabilities: XX layers
 ```
 
-1. `bin`ディレクトリが存在することを確認
-2. `bin`ディレクトリに`llama-server.exe`（Windows）または`llama-server`（Linux/Mac）が存在することを確認
-3. ファイルに実行権限があることを確認（Linux/Mac）
-4. ファイルの入手方法は`bin/README.md`を参照
+ここで「XX」は使用されるGPUレイヤー数で、GPUのVRAM容量に応じて変化します。
 
-### モデルファイルが見つからないエラー
+## 更新履歴
 
-```
-Model file not found or not readable at /path/to/model.gguf
-```
-
-1. `models`ディレクトリが存在することを確認
-2. `models`ディレクトリに`.gguf`または`.bin`拡張子のモデルファイルが存在することを確認
-3. ファイルの読み取り権限があることを確認
-4. モデル名の設定が正しいことを確認（デフォルトは`gemma-3-12b-it-Q8_0.gguf`）
-
-### チャット機能でエラーが発生する場合
-
-1. ブラウザの開発者コンソールでエラーを確認してください
-2. APIレスポンスが異常な形式であるか、応答パーシングに問題がある可能性があります
-3. ストリーミングモードの切り替えを試してみてください（現在はストリーミングが推奨されています）
-4. サーバー初期化中の場合は、数分待ってから再試行してください
-
-### 応答が遅い、または無応答の場合
-
-1. モデルの初期化が完了しているか確認してください
-2. 大きなモデル（12B）は応答生成に時間がかかることがあります（特に初回）
-3. GPUのメモリ不足が発生している可能性があります（コンソールログを確認）
-4. モデルパラメータ（コンテキストサイズやバッチサイズ）の調整を検討してください
-
-### GPUメモリ問題
-
-```
-CUDA error: out of memory
-```
-
-1. `gpuLayers`の数を減らしてみてください（src/lib/gemma/llama-cpp.tsの`DEFAULT_LLAMA_CONFIG`）
-2. より小さいモデルの使用を検討してください
-3. コンテキストサイズ（contextSize）を小さくしてみてください
-4. バッチサイズ（batchSize）を小さくしてみてください
-
-### 言語設定
-
-現在のバージョンではUIの日本語化が実装されています。さらなる言語設定やカスタマイズが必要な場合は、コードを参照してください。
-
-### その他の問題
-
-プロジェクトに関する問題やエラーは、GitHubのIssuesセクションで報告してください。
-
-## 貢献について
-
-プルリクエストやイシューの作成は大歓迎です。大きな変更を行う場合は、まずイシューを開いて議論してください。
+最新の進捗と変更点については [PROGRESS.md](PROGRESS.md) を参照してください。
 
 ## ライセンス
 
-MIT
+MITライセンス
+
+## 注意事項
+
+このツールキットはGemmaモデルを使用します。Gemmaは[Google](https://blog.google/technology/developers/gemma-open-models/)によってオープンソース化されたLLMです。モデルの使用に際しては、Gemmaモデルのライセンス条項に従ってください。
+
+このツールキットは実験的プロジェクトです。本番環境での使用は自己責任でお願いします。
