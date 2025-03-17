@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { Message } from '@/lib/gemma';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 
 interface ChatInterfaceProps {
   initialMessages?: Message[];
@@ -19,6 +19,7 @@ export function ChatInterface({
   const [isLoading, setIsLoading] = useState(false);
   const [streamedContent, setStreamedContent] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [serverStatus, setServerStatus] = useState<'running' | 'stopped' | 'unknown'>('unknown');
   const messageEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -26,23 +27,43 @@ export function ChatInterface({
   useEffect(() => {
     const checkApiHealth = async () => {
       try {
+        console.log('Checking API health...');
         const response = await fetch('/api/chat');
+        
         if (!response.ok) {
-          throw new Error(`API health check failed with status ${response.status}`);
+          console.error(`API health check failed with status ${response.status}`);
+          setServerStatus('stopped');
+          setError('LLMサーバーとの接続に失敗しました。サーバーがオフラインか、応答していません。');
+          return;
         }
         
         const data = await response.json();
-        if (data.status !== 'running') {
-          console.warn(`LLM server status: ${data.status}`);
-        } else {
+        console.log('API health check response:', data);
+        
+        if (data.status === 'running') {
           console.log('LLM server is running properly');
+          setServerStatus('running');
+          setError(null);
+        } else {
+          console.warn(`LLM server status: ${data.status}`);
+          setServerStatus('stopped');
+          setError('LLMサーバーが起動していません。');
         }
       } catch (error) {
         console.error('API health check error:', error);
+        setServerStatus('unknown');
+        setError('APIヘルスチェック中にエラーが発生しました。ネットワーク接続を確認してください。');
       }
     };
     
     checkApiHealth();
+    
+    // 定期的なヘルスチェック（10秒ごと）
+    const intervalId = setInterval(checkApiHealth, 10000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
   }, []);
 
   // Scroll to bottom when messages change
@@ -58,6 +79,121 @@ export function ChatInterface({
       }
     };
   }, []);
+
+  const handleDirectAPICall = async (content: string): Promise<boolean> => {
+    try {
+      console.log('Attempting direct API call to llama-server...');
+      
+      // 直接llama-serverにリクエストを送る
+      const userMessage: Message = { role: 'user', content };
+      const allMessages = [...messages, userMessage];
+      
+      // リクエストを構築
+      const prompt = allMessages.map(message => {
+        switch (message.role) {
+          case 'system':
+            return `<start_of_turn>system\n${message.content.trim()}<end_of_turn>\n\n`;
+          case 'user':
+            return `<start_of_turn>user\n${message.content.trim()}<end_of_turn>\n\n`;
+          case 'assistant':
+            return `<start_of_turn>model\n${message.content.trim()}<end_of_turn>\n\n`;
+          default:
+            return `${message.content.trim()}\n\n`;
+        }
+      }).join('') + '<start_of_turn>model\n';
+      
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      
+      try {
+        const response = await fetch('http://127.0.0.1:8080/completion', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt,
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            max_tokens: 2048,
+            stop: ['<end_of_turn>'],
+            stream: true
+          }),
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeout);
+        
+        if (!response.ok) {
+          console.warn('Direct server communication failed');
+          return false;
+        }
+        
+        // ストリーミングレスポンスを処理
+        const reader = response.body?.getReader();
+        if (!reader) return false;
+        
+        const decoder = new TextDecoder();
+        let responseText = '';
+        let lastUpdate = Date.now();
+        const UPDATE_INTERVAL = 50; // ms
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            if (responseText.trim()) {
+              setStreamedContent(responseText);
+            }
+            break;
+          }
+          
+          const chunk = decoder.decode(value, { stream: true });
+          
+          // JSONラインを処理
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            
+            try {
+              const data = JSON.parse(line);
+              if (data.content) {
+                responseText += data.content;
+              }
+            } catch (e) {
+              // JSONでない場合はそのまま追加
+              responseText += line;
+            }
+          }
+          
+          // 一定間隔でのみUIを更新
+          const now = Date.now();
+          if (now - lastUpdate > UPDATE_INTERVAL) {
+            setStreamedContent(responseText);
+            lastUpdate = now;
+          }
+        }
+        
+        reader.releaseLock();
+        
+        // メッセージに追加
+        setMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: responseText }
+        ]);
+        
+        return true;
+      } catch (error) {
+        console.error('Error in direct API call:', error);
+        clearTimeout(timeout);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error setting up direct API call:', error);
+      return false;
+    }
+  };
 
   const handleStreamedResponse = async (response: Response) => {
     if (!response.body) {
@@ -117,6 +253,20 @@ export function ChatInterface({
     // Set loading state
     setIsLoading(true);
     setStreamedContent('');
+
+    // サーバー状態が停止している場合でも直接通信を試みる
+    if (serverStatus === 'stopped' || serverStatus === 'unknown') {
+      console.log('Server appears to be offline, trying direct communication...');
+      const directSuccess = await handleDirectAPICall(content);
+      
+      if (directSuccess) {
+        setIsLoading(false);
+        setStreamedContent('');
+        return;
+      } else {
+        console.log('Direct communication failed, continuing with standard API...');
+      }
+    }
 
     // 新しいAbortControllerを作成
     abortControllerRef.current = new AbortController();
@@ -218,9 +368,63 @@ export function ChatInterface({
     }
   };
 
+  const handleServerRefresh = async () => {
+    try {
+      setError(null);
+      
+      console.log('Manually refreshing server status...');
+      const response = await fetch('/api/chat');
+      
+      if (!response.ok) {
+        setServerStatus('stopped');
+        setError('LLMサーバーとの接続に失敗しました。サーバーがオフラインか、応答していません。');
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (data.status === 'running') {
+        setServerStatus('running');
+        setError(null);
+      } else {
+        setServerStatus('stopped');
+        setError('LLMサーバーが起動していません。');
+      }
+    } catch (error) {
+      console.error('Server refresh error:', error);
+      setServerStatus('unknown');
+      setError('サーバーステータスの更新中にエラーが発生しました。');
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4">
+        {/* サーバーステータス表示 */}
+        <div className={`mb-4 p-3 border rounded-md flex items-center ${
+          serverStatus === 'running' ? 'bg-green-50 border-green-500 text-green-700' :
+          serverStatus === 'stopped' ? 'bg-red-50 border-red-500 text-red-700' :
+          'bg-yellow-50 border-yellow-500 text-yellow-700'
+        }`}>
+          <div className={`w-3 h-3 rounded-full mr-2 ${
+            serverStatus === 'running' ? 'bg-green-500' :
+            serverStatus === 'stopped' ? 'bg-red-500' :
+            'bg-yellow-500'
+          }`}></div>
+          <div className="flex-1">
+            {serverStatus === 'running' ? 'LLMサーバーが正常に動作しています' :
+             serverStatus === 'stopped' ? 'LLMサーバーが停止しています' :
+             'LLMサーバーの状態を確認中...'}
+          </div>
+          <button 
+            onClick={handleServerRefresh}
+            className="p-1 hover:bg-gray-100 rounded-full"
+            title="ステータスを更新"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
+        
         {/* エラーメッセージを表示 */}
         {error && (
           <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
