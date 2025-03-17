@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateCompletion, streamCompletion, Message, initializeLLM } from '@/lib/gemma';
 import { isLlamaServerRunning, isCorsEnabled } from '@/lib/gemma/llama-cpp';
-import { pingLlamaServer } from '@/lib/gemma/llama-client';
+import { pingLlamaServer, testServerConnection } from '@/lib/gemma/llama-client';
 import prisma from '@/lib/prisma/client';
 import fetch from 'node-fetch';
 
@@ -10,25 +10,51 @@ export async function POST(req: NextRequest) {
   console.log('🟢 [API Route] POST /api/chat received');
   
   try {
-    // サーバーが応答しているかを直接チェック
-    let serverResponding = false;
-    try {
-      // 503ステータスも考慮して改善したpingLlamaServer関数を使用
-      serverResponding = await pingLlamaServer(2, 1000);
-    } catch (pingError) {
-      console.warn('Error pinging llama-server:', pingError);
+    // サーバーの状態を詳細に確認
+    let serverStatus = 'stopped';
+    let serverStatusMessage = '';
+    
+    // プロセスが実行中かチェック
+    const isProcessRunning = isLlamaServerRunning();
+    
+    if (isProcessRunning) {
+      serverStatus = 'running_process';
+      
+      // HTTPサーバーが応答しているかチェック
+      try {
+        const isResponding = await pingLlamaServer(2, 1000);
+        if (isResponding) {
+          serverStatus = 'ready';
+        } else {
+          serverStatus = 'initializing';
+          serverStatusMessage = 'サーバープロセスは実行中ですが、HTTPリクエストにはまだ応答していません';
+          
+          // より詳細な接続テスト
+          const connectionTest = await testServerConnection();
+          if (connectionTest.status === 'initializing') {
+            serverStatusMessage = 'サーバーは初期化中です。しばらくお待ちください。';
+          } else if (connectionTest.status === 'unavailable') {
+            serverStatus = 'error';
+            serverStatusMessage = 'サーバーは実行中ですが、応答していません。アプリケーションの再起動が必要かもしれません。';
+          }
+        }
+      } catch (pingError) {
+        console.warn('Error pinging llama-server:', pingError);
+        serverStatus = 'error';
+        serverStatusMessage = 'サーバー状態の確認中にエラーが発生しました';
+      }
     }
     
-    // LLMが初期化されていないことを確認
-    if (!serverResponding && !isLlamaServerRunning()) {
-      console.log('🟡 [API Route] LLM is not running');
+    // LLMが実行中でない場合
+    if (serverStatus === 'stopped' || serverStatus === 'error') {
+      console.log(`🟡 [API Route] LLM status: ${serverStatus} - ${serverStatusMessage}`);
       
-      // 重要な変更: 自動初期化を行わず、エラーを返す
-      console.log('🔴 [API Route] Not attempting to initialize LLM - this should be done by the LLMInitializer');
+      // エラーレスポンスを返す
       return NextResponse.json(
         { 
-          error: 'LLMサーバーが実行されていません。アプリケーションを再起動してください。',
-          serverStatus: 'stopped'
+          error: 'LLMサーバーが正常に実行されていません。アプリケーションを再起動してください。',
+          serverStatus: serverStatus,
+          message: serverStatusMessage
         },
         { status: 503 }
       );
@@ -59,6 +85,36 @@ export async function POST(req: NextRequest) {
       );
     }
     
+    // サーバーがまだ初期化中の場合
+    if (serverStatus === 'initializing') {
+      // ストリーミングの場合は初期化中のメッセージをストリーミング
+      if (stream) {
+        console.log('🟡 [API Route] Server is initializing, sending initializing message as stream');
+        const encoder = new TextEncoder();
+        const customReadable = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('サーバーは初期化中です。しばらくお待ちください。後ほど再度お試しください。'));
+            controller.close();
+          }
+        });
+        
+        return new NextResponse(customReadable, {
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Transfer-Encoding': 'chunked',
+            'Cache-Control': 'no-cache, no-transform',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        });
+      } else {
+        // 非ストリーミングの場合は初期化中のメッセージを返す
+        return NextResponse.json({
+          completion: 'サーバーは初期化中です。しばらくお待ちください。後ほど再度お試しください。',
+          serverStatus: 'initializing'
+        });
+      }
+    }
+    
     // If stream is true, set up a streaming response
     if (stream) {
       console.log('🟢 [API Route] Setting up streaming response');
@@ -66,10 +122,8 @@ export async function POST(req: NextRequest) {
       const customReadable = new ReadableStream({
         async start(controller) {
           try {
-            // 「生成中...」と表示
             controller.enqueue(encoder.encode(''));
             
-            // 常にライブラリ実装を使用（直接通信はスキップ）
             console.log('🟢 [API Route] Using library implementation for streaming');
             
             try {
@@ -196,47 +250,21 @@ export async function GET(req: NextRequest) {
       // CORSステータスを確認
       corsEnabled = isCorsEnabled();
       
-      // 直接エンドポイントにリクエストを送信
-      const response = await fetch('http://127.0.0.1:8080/health', {
-        method: 'GET',
-        timeout: 2000
-      });
-      
-      if (response.ok) {
-        serverResponding = true;
-        serverStatus = 'running';
-      } else if (response.status === 503) {
-        // 503はサーバーが初期化中であることを示す
-        serverResponding = true;
-        serverStatus = 'initializing';
-        serverMessage = 'サーバーは起動中ですが、まだ完全に初期化されていません';
-      } else {
-        // その他のステータスコード
-        serverMessage = `ヘルスチェックエンドポイントが異常なステータスコードを返しました: ${response.status}`;
-      }
+      // 詳細な接続テスト
+      const connectionTest = await testServerConnection();
+      serverStatus = connectionTest.status;
+      serverMessage = connectionTest.message;
+      serverResponding = connectionTest.success;
       
       if (!serverResponding) {
-        // モデルエンドポイントも試す
-        try {
-          const modelResponse = await fetch('http://127.0.0.1:8080/model', {
-            method: 'GET',
-            timeout: 2000
-          });
-          
-          if (modelResponse.ok) {
-            serverResponding = true;
-            serverStatus = 'running';
-          } else if (modelResponse.status === 503) {
-            serverResponding = true;
-            serverStatus = 'initializing';
-            serverMessage = 'サーバーは起動中ですが、まだ完全に初期化されていません';
-          }
-        } catch (modelError) {
-          console.warn('Error checking model endpoint:', modelError);
+        // プロセスが起動しているかチェック
+        if (isLlamaServerRunning()) {
+          serverStatus = 'starting';
+          serverMessage = 'サーバープロセスは起動していますが、HTTPリクエストにはまだ応答していません';
         }
       }
-    } catch (fetchError) {
-      console.warn('Error checking llama-server health:', fetchError);
+    } catch (error) {
+      console.warn('Error checking llama-server health:', error);
       
       // プロセスが起動しているかチェック
       if (isLlamaServerRunning()) {
