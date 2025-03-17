@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { initializeLLM, isLlamaServerRunning } from '@/lib/gemma';
 import { pingLlamaServer } from '@/lib/gemma/llama-client';
 
+// サーバー起動状態の追跡
+let isServerStarting = false;
+
 /**
  * LLMサーバーを初期化するAPIエンドポイント
  * POSTリクエストでサーバーの起動をトリガーします
@@ -51,24 +54,58 @@ export async function POST(req: NextRequest) {
       });
     }
     
+    // サーバーが起動中かどうかをチェック
+    if (isServerStarting) {
+      console.log('🟡 [API Route] LLM server initialization is already in progress');
+      return NextResponse.json({ 
+        success: true, 
+        initialized: false,
+        status: 'initializing',
+        message: 'LLM server initialization is already in progress' 
+      });
+    }
+    
     // autoStart=trueの場合のみサーバーを起動
     if (autoStart) {
       console.log('🟢 [API Route] Initializing LLM server...');
-      const initialized = await initializeLLM();
       
-      if (initialized) {
-        console.log('🟢 [API Route] LLM server initialized successfully');
-        return NextResponse.json({ 
-          success: true, 
-          initialized: true,
-          status: 'initialized',
-          message: 'LLM server initialized successfully' 
-        });
-      } else {
-        console.error('🔴 [API Route] LLM server initialization failed');
+      try {
+        // 起動中フラグを設定
+        isServerStarting = true;
+        
+        const initialized = await initializeLLM();
+        
+        // 起動中フラグをリセット
+        isServerStarting = false;
+        
+        if (initialized) {
+          console.log('🟢 [API Route] LLM server initialized successfully');
+          return NextResponse.json({ 
+            success: true, 
+            initialized: true,
+            status: 'initialized',
+            message: 'LLM server initialized successfully' 
+          });
+        } else {
+          console.error('🔴 [API Route] LLM server initialization failed');
+          return NextResponse.json({ 
+            success: false, 
+            error: 'Failed to initialize LLM server' 
+          }, { status: 500 });
+        }
+      } catch (initError) {
+        // エラー時も起動中フラグをリセット
+        isServerStarting = false;
+        
+        console.error('🔴 [API Route] Error initializing LLM server:', initError);
+        
+        const errorMessage = initError instanceof Error 
+          ? initError.message 
+          : 'Unknown error';
+          
         return NextResponse.json({ 
           success: false, 
-          error: 'Failed to initialize LLM server' 
+          error: errorMessage 
         }, { status: 500 });
       }
     } else {
@@ -104,6 +141,7 @@ export async function GET(req: NextRequest) {
     // サーバーの状態を確認
     let processRunning = isLlamaServerRunning();
     let httpResponding = false;
+    let serverStarting = isServerStarting;
     
     try {
       httpResponding = await pingLlamaServer(1, 1000);
@@ -111,13 +149,29 @@ export async function GET(req: NextRequest) {
       console.warn('🟡 [API Route] Error pinging LLM server:', pingError);
     }
     
+    // 総合的なステータス
+    const isRunning = processRunning || httpResponding;
+    
+    // 状態メッセージ
+    let statusMessage = 'unknown';
+    if (isRunning) {
+      statusMessage = 'running';
+    } else if (serverStarting) {
+      statusMessage = 'starting';
+    } else {
+      statusMessage = 'stopped';
+    }
+    
     return NextResponse.json({
       success: true,
       status: {
         processRunning,
         httpResponding,
-        isRunning: processRunning || httpResponding
-      }
+        isRunning,
+        serverStarting,
+        status: statusMessage
+      },
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('🔴 [API Route] Error checking LLM server status:', error);
