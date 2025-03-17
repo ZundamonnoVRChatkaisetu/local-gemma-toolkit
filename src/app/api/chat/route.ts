@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
-        { error: 'Invalid request: messages array is required' },
+        { error: 'メッセージ配列が必要です' },
         { status: 400 }
       );
     }
@@ -37,7 +37,16 @@ export async function POST(req: NextRequest) {
             controller.close();
           } catch (error) {
             console.error('Error in streaming response:', error);
-            controller.error(error);
+            
+            // エラーメッセージをクライアントに送信
+            const errorMessage = error instanceof Error 
+              ? error.message 
+              : '不明なエラーが発生しました';
+              
+            controller.enqueue(encoder.encode(
+              `\n\n申し訳ありません。エラーが発生しました: ${errorMessage}`
+            ));
+            controller.close();
           }
         },
       });
@@ -46,23 +55,49 @@ export async function POST(req: NextRequest) {
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
           'Transfer-Encoding': 'chunked',
+          'Cache-Control': 'no-cache',
         },
       });
     }
     
     // Non-streaming response
-    const completion = await generateCompletion(messages);
-    
-    // In a real implementation, save to database
-    if (conversationId) {
-      // Placeholder for saving to database
+    try {
+      const completion = await generateCompletion(messages);
+      
+      // In a real implementation, save to database
+      if (conversationId) {
+        // Placeholder for saving to database
+      }
+      
+      return NextResponse.json({ completion });
+    } catch (error) {
+      console.error('Error in non-streaming completion:', error);
+      
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : '不明なエラーが発生しました';
+      
+      return NextResponse.json(
+        { 
+          error: '補完生成に失敗しました', 
+          details: errorMessage,
+          completion: '申し訳ありません。リクエストの処理中にエラーが発生しました。もう一度お試しください。'
+        },
+        { status: 500 }
+      );
     }
-    
-    return NextResponse.json({ completion });
   } catch (error) {
     console.error('Error in chat API:', error);
+    
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : '不明なエラーが発生しました';
+    
     return NextResponse.json(
-      { error: 'Failed to generate completion' },
+      { 
+        error: '補完生成に失敗しました', 
+        details: errorMessage 
+      },
       { status: 500 }
     );
   }
