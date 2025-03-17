@@ -91,6 +91,27 @@ npm run dev
 
 ## トラブルシューティング
 
+### ブラウザでのCORSエラー（チャット送信できない問題）
+
+ブラウザのコンソールに以下のようなエラーが表示される場合：
+```
+Access to fetch at 'http://127.0.0.1:8080/completion' from origin 'http://localhost:3000' has been blocked by CORS policy
+```
+
+**解決方法**:
+1. **CORSエラー対策**: 直接APIアクセスがブラウザにブロックされています。以下のいずれかの方法で解決できます：
+   
+   a) **推奨: llama-serverの起動オプション修正**:
+   ```bash
+   # bin/llama-server.exeの起動オプションに--cors '*'を追加
+   bin/llama-server.exe --model models/gemma-3-27b-it-Q6_K.gguf --ctx-size 4096 --batch-size 512 --threads 21 --n-gpu-layers 32 --host 127.0.0.1 --port 8080 --cors '*' --mlock
+   ```
+   
+   b) **代替: API経由での通信に切り替え**:
+   - chat-interface.tsxファイル内の直接APIアクセス（`fetch('http://127.0.0.1:8080/completion'...`）部分をコメントアウトし、Next.js APIルート（`/api/chat`）経由の通信のみを使用
+
+2. **サーバー再起動**: 上記の設定を適用後、アプリケーションを再起動してください。
+
 ### サーバー初期化エラー（503 Service Unavailable）
 
 大規模モデル（例：27B）を使用する場合、初期ロード時に以下のようなエラーが表示されることがあります：
