@@ -31,7 +31,7 @@ export function ChatInput({ onSubmit, isLoading = false }: ChatInputProps) {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Type your message here..."
+        placeholder="メッセージを入力してください..."
         className="flex-1 resize-none min-h-[60px] max-h-[200px]"
         disabled={isLoading}
       />
@@ -39,7 +39,7 @@ export function ChatInput({ onSubmit, isLoading = false }: ChatInputProps) {
         onClick={handleSubmit} 
         disabled={isLoading || !input.trim()}
       >
-        Send
+        送信
       </Button>
     </div>
   );
