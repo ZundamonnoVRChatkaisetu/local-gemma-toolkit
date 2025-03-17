@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateCompletion, streamCompletion, Message } from '@/lib/gemma';
+import { generateCompletion, streamCompletion, Message, initializeLLM, isLlamaServerRunning } from '@/lib/gemma';
 import prisma from '@/lib/prisma/client';
 
 // Handle POST requests to /api/chat
 export async function POST(req: NextRequest) {
   try {
+    // LLMが初期化されていることを確認
+    if (!isLlamaServerRunning()) {
+      console.log('LLM is not running, attempting to initialize...');
+      const initialized = await initializeLLM();
+      if (!initialized) {
+        return NextResponse.json(
+          { error: 'LLMサーバーの初期化に失敗しました。サーバーログを確認してください。' },
+          { status: 500 }
+        );
+      }
+    }
+    
     const { messages, conversationId, stream = true } = await req.json();
     
     if (!messages || !Array.isArray(messages)) {
@@ -20,12 +32,26 @@ export async function POST(req: NextRequest) {
       const customReadable = new ReadableStream({
         async start(controller) {
           try {
+            // 「生成中...」と表示
+            controller.enqueue(encoder.encode(''));
+            
             // Use the streaming version of the LLM completion
             const streamGen = streamCompletion(messages);
             
+            // 応答を受信したかどうかを追跡
+            let receivedResponse = false;
+            
             // Send message as chunks come in
             for await (const chunk of streamGen) {
+              receivedResponse = true;
               controller.enqueue(encoder.encode(chunk));
+            }
+            
+            // 応答が空だった場合
+            if (!receivedResponse) {
+              controller.enqueue(encoder.encode(
+                '応答を生成できませんでした。サーバーの状態を確認してください。'
+              ));
             }
             
             // Save the message to database (in a real implementation, we'd collect the full response first)
@@ -55,7 +81,8 @@ export async function POST(req: NextRequest) {
         headers: {
           'Content-Type': 'text/plain; charset=utf-8',
           'Transfer-Encoding': 'chunked',
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Content-Type-Options': 'nosniff',
         },
       });
     }
@@ -98,6 +125,27 @@ export async function POST(req: NextRequest) {
         error: '補完生成に失敗しました', 
         details: errorMessage 
       },
+      { status: 500 }
+    );
+  }
+}
+
+// サーバーヘルスチェックAPIを追加
+export async function GET(req: NextRequest) {
+  try {
+    const status = isLlamaServerRunning() 
+      ? 'running' 
+      : 'stopped';
+    
+    return NextResponse.json({ 
+      status,
+      timestamp: new Date().toISOString() 
+    });
+  } catch (error) {
+    console.error('Error in health check API:', error);
+    
+    return NextResponse.json(
+      { error: 'サーバーステータス取得に失敗しました' },
       { status: 500 }
     );
   }
