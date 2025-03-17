@@ -1,14 +1,16 @@
 import React, { useState, KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { XCircle } from 'lucide-react';
 import { Message } from '@/lib/gemma';
 
 interface ChatInputProps {
   onSubmit: (message: string) => void;
+  onCancel?: () => void;
   isLoading?: boolean;
 }
 
-export function ChatInput({ onSubmit, isLoading = false }: ChatInputProps) {
+export function ChatInput({ onSubmit, onCancel, isLoading = false }: ChatInputProps) {
   const [input, setInput] = useState('');
 
   const handleSubmit = () => {
@@ -35,12 +37,24 @@ export function ChatInput({ onSubmit, isLoading = false }: ChatInputProps) {
         className="flex-1 resize-none min-h-[60px] max-h-[200px]"
         disabled={isLoading}
       />
-      <Button 
-        onClick={handleSubmit} 
-        disabled={isLoading || !input.trim()}
-      >
-        送信
-      </Button>
+      
+      {isLoading && onCancel ? (
+        <Button 
+          variant="destructive"
+          onClick={onCancel}
+          className="bg-red-500 hover:bg-red-600"
+        >
+          <XCircle className="mr-1 h-4 w-4" />
+          停止
+        </Button>
+      ) : (
+        <Button 
+          onClick={handleSubmit} 
+          disabled={isLoading || !input.trim()}
+        >
+          送信
+        </Button>
+      )}
     </div>
   );
 }
