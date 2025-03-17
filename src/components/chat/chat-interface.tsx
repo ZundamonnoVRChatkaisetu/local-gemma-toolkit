@@ -136,6 +136,8 @@ export function ChatInterface({
   };
 
   const handleSubmit = async (content: string) => {
+    console.log(`🔵 [ChatInterface] handleSubmit called with content: ${content}`);
+    
     // 既存のリクエストをキャンセル
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -159,6 +161,8 @@ export function ChatInterface({
     const { signal } = abortControllerRef.current;
 
     try {
+      console.log(`🔵 [ChatInterface] Sending POST request to /api/chat...`);
+      
       // ストリーミングモードでAPIを呼び出す
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -173,6 +177,8 @@ export function ChatInterface({
         signal,
       });
 
+      console.log(`🔵 [ChatInterface] Received response with status: ${response.status}`);
+
       if (!response.ok) {
         // エラーレスポンスを処理
         try {
@@ -186,7 +192,9 @@ export function ChatInterface({
       }
 
       // ストリーミングレスポンスを処理
+      console.log(`🔵 [ChatInterface] Processing streaming response...`);
       const completionText = await handleStreamedResponse(response);
+      console.log(`🔵 [ChatInterface] Stream complete, received text of length: ${completionText.length}`);
       
       if (completionText.trim()) {
         // メッセージリストに追加
