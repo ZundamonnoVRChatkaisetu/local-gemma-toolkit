@@ -15,17 +15,17 @@ export default function ChatPage() {
   ];
 
   return (
-    <div className="flex flex-col h-screen">
-      <header className="p-4 border-b">
+    <div className="container mx-auto px-4 h-[calc(100vh-9rem)] flex flex-col">
+      <div className="py-4">
         <h1 className="text-2xl font-bold">Chat with Gemma</h1>
         <p className="text-sm text-gray-500">
           Powered by Gemma 27B (6B quantized) - Running 100% locally on your device
         </p>
-      </header>
+      </div>
       
-      <main className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden border rounded-lg">
         <ChatInterface initialMessages={initialMessages} />
-      </main>
+      </div>
     </div>
   );
 }
