@@ -19,36 +19,19 @@ export async function POST(req: NextRequest) {
       console.warn('Error pinging llama-server:', pingError);
     }
     
-    // LLMが初期化されていることを確認
-    if (!serverResponding) {
-      console.log('LLM is not running, attempting to initialize...');
-      try {
-        const initialized = await initializeLLM();
-        if (!initialized) {
-          console.log('🔴 [API Route] LLM initialization failed');
-          return NextResponse.json(
-            { error: 'LLMサーバーの初期化に失敗しました。サーバーログを確認してください。' },
-            { status: 500 }
-          );
-        }
-        
-        // 初期化後に再度ping（より長い待機時間を設定）
-        console.log('LLM initialized, waiting for server to become responsive...');
-        // 初期化直後は応答が遅いことがあるため、待機時間を延長
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        serverResponding = await pingLlamaServer(2, 2000);
-        if (!serverResponding) {
-          console.warn('Server initialized but not responding to ping. Continuing anyway since process might still be loading...');
-          // プロセスが起動中でも続行する
-        }
-      } catch (initError) {
-        console.error('Error initializing LLM:', initError);
-        return NextResponse.json(
-          { error: 'LLMサーバーの初期化中にエラーが発生しました: ' + (initError.message || '不明なエラー') },
-          { status: 500 }
-        );
-      }
+    // LLMが初期化されていないことを確認
+    if (!serverResponding && !isLlamaServerRunning()) {
+      console.log('🟡 [API Route] LLM is not running');
+      
+      // 重要な変更: 自動初期化を行わず、エラーを返す
+      console.log('🔴 [API Route] Not attempting to initialize LLM - this should be done by the LLMInitializer');
+      return NextResponse.json(
+        { 
+          error: 'LLMサーバーが実行されていません。アプリケーションを再起動してください。',
+          serverStatus: 'stopped'
+        },
+        { status: 503 }
+      );
     }
     
     // リクエストボディの解析
