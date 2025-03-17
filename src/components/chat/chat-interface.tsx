@@ -23,7 +23,7 @@ export function ChatInterface({
   const [corsEnabled, setCorsEnabled] = useState<boolean>(false);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const corsErrorDetectedRef = useRef<boolean>(false);
+  const corsErrorDetectedRef = useRef<boolean>(true); // 常にCORSエラーを検出したと仮定
 
   // スタートアップ時にAPI健全性チェックを実行
   useEffect(() => {
@@ -47,25 +47,9 @@ export function ChatInterface({
           setServerStatus('running');
           setError(null);
           
-          // CORSが有効かどうかを確認 (APIレスポンスに含まれているかもしれない)
-          if (data.corsEnabled !== undefined) {
-            setCorsEnabled(data.corsEnabled);
-          } else {
-            // CORS確認のためにllama-serverに直接リクエストをテスト的に送信
-            try {
-              const testResponse = await fetch('http://127.0.0.1:8080/health', {
-                method: 'GET',
-                // クレデンシャルは含めない（CORS制限を最小限に）
-                credentials: 'omit',
-              });
-              console.log('CORS test successful, direct access to llama-server is possible');
-              setCorsEnabled(true);
-            } catch (corsError) {
-              console.warn('CORS test failed, will use API route as fallback');
-              setCorsEnabled(false);
-              corsErrorDetectedRef.current = true;
-            }
-          }
+          // CORS設定は常に無効に設定
+          setCorsEnabled(false);
+          corsErrorDetectedRef.current = true;
         } else {
           console.warn(`LLM server status: ${data.status}`);
           setServerStatus('stopped');
@@ -102,128 +86,10 @@ export function ChatInterface({
     };
   }, []);
 
+  // 直接APIコールは常に失敗するようにする
   const handleDirectAPICall = async (content: string): Promise<boolean> => {
-    // CORSエラーが過去に検出された場合は直接アクセスをスキップ
-    if (corsErrorDetectedRef.current) {
-      console.log('Skipping direct API call due to previously detected CORS error');
-      return false;
-    }
-    
-    try {
-      console.log('Attempting direct API call to llama-server...');
-      
-      // 直接llama-serverにリクエストを送る
-      const userMessage: Message = { role: 'user', content };
-      const allMessages = [...messages, userMessage];
-      
-      // リクエストを構築
-      const prompt = allMessages.map(message => {
-        switch (message.role) {
-          case 'system':
-            return `<start_of_turn>system\n${message.content.trim()}<end_of_turn>\n\n`;
-          case 'user':
-            return `<start_of_turn>user\n${message.content.trim()}<end_of_turn>\n\n`;
-          case 'assistant':
-            return `<start_of_turn>model\n${message.content.trim()}<end_of_turn>\n\n`;
-          default:
-            return `${message.content.trim()}\n\n`;
-        }
-      }).join('') + '<start_of_turn>model\n';
-      
-      try {
-        const response = await fetch('http://127.0.0.1:8080/completion', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          credentials: 'omit', // CORSの制限を最小限に
-          body: JSON.stringify({
-            prompt,
-            temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
-            max_tokens: 2048,
-            stop: ['<end_of_turn>'],
-            stream: true
-          }),
-        });
-        
-        if (!response.ok) {
-          console.warn(`Direct server communication failed with status ${response.status}`);
-          return false;
-        }
-        
-        // ストリーミングレスポンスを処理
-        const reader = response.body?.getReader();
-        if (!reader) return false;
-        
-        const decoder = new TextDecoder();
-        let responseText = '';
-        let lastUpdate = Date.now();
-        const UPDATE_INTERVAL = 50; // ms
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) {
-            if (responseText.trim()) {
-              setStreamedContent(responseText);
-            }
-            break;
-          }
-          
-          const chunk = decoder.decode(value, { stream: true });
-          
-          // JSONラインを処理
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            
-            try {
-              const data = JSON.parse(line);
-              if (data.content) {
-                responseText += data.content;
-              }
-            } catch (e) {
-              // JSONでない場合はそのまま追加
-              responseText += line;
-            }
-          }
-          
-          // 一定間隔でのみUIを更新
-          const now = Date.now();
-          if (now - lastUpdate > UPDATE_INTERVAL) {
-            setStreamedContent(responseText);
-            lastUpdate = now;
-          }
-        }
-        
-        reader.releaseLock();
-        
-        // メッセージに追加
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: responseText }
-        ]);
-        
-        return true;
-      } catch (error) {
-        console.error('Error in direct API call:', error);
-        
-        // CORSエラーを検出
-        if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-          console.warn('CORS error detected. Direct API access will be disabled.');
-          corsErrorDetectedRef.current = true;
-          setCorsEnabled(false);
-        }
-        
-        return false;
-      }
-    } catch (error) {
-      console.error('Error setting up direct API call:', error);
-      return false;
-    }
+    console.log('Direct API calls are disabled, using API route instead');
+    return false;
   };
 
   const handleStreamedResponse = async (response: Response) => {
@@ -285,19 +151,8 @@ export function ChatInterface({
     setIsLoading(true);
     setStreamedContent('');
 
-    // CORSが有効で、サーバーが実行中なら直接通信を試みる
-    let directSuccess = false;
-    if (corsEnabled && serverStatus === 'running' && !corsErrorDetectedRef.current) {
-      directSuccess = await handleDirectAPICall(content);
-      
-      if (directSuccess) {
-        setIsLoading(false);
-        setStreamedContent('');
-        return;
-      } else {
-        console.log('Direct communication failed, falling back to API route');
-      }
-    }
+    // 常にAPI経由で通信
+    console.log('Using API route for communication');
 
     // 新しいAbortControllerを作成
     abortControllerRef.current = new AbortController();
@@ -417,26 +272,6 @@ export function ChatInterface({
       if (data.status === 'running') {
         setServerStatus('running');
         setError(null);
-        
-        // CORSが有効かどうかを再確認
-        if (corsErrorDetectedRef.current) {
-          console.log('Resetting CORS error flag for retesting');
-          corsErrorDetectedRef.current = false;
-          
-          // CORS再確認
-          try {
-            const testResponse = await fetch('http://127.0.0.1:8080/health', {
-              method: 'GET',
-              credentials: 'omit',
-            });
-            console.log('CORS test successful, direct access to llama-server is possible');
-            setCorsEnabled(true);
-          } catch (corsError) {
-            console.warn('CORS test still failed, will continue using API route');
-            setCorsEnabled(false);
-            corsErrorDetectedRef.current = true;
-          }
-        }
       } else {
         setServerStatus('stopped');
         setError('LLMサーバーが起動していません。');
@@ -464,10 +299,7 @@ export function ChatInterface({
           }`}></div>
           <div className="flex-1">
             {serverStatus === 'running' ? 
-              (corsEnabled ? 
-                'LLMサーバーが正常に動作しています (直接アクセス可能)' : 
-                'LLMサーバーが正常に動作しています (API経由でアクセス中)'
-              ) :
+              'LLMサーバーが正常に動作しています (API経由でアクセス中)' :
              serverStatus === 'stopped' ? 'LLMサーバーが停止しています' :
              'LLMサーバーの状態を確認中...'}
           </div>
@@ -498,18 +330,15 @@ export function ChatInterface({
           </div>
         )}
         
-        {/* CORS関連のエラーとそのヘルプメッセージを表示 */}
-        {corsErrorDetectedRef.current && (
-          <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-4">
-            <div className="flex items-center">
-              <AlertCircle className="h-5 w-5 text-yellow-500 mr-2" />
-              <p className="text-sm text-yellow-700">
-                ブラウザからllama-serverへの直接アクセスがブロックされています（CORSエラー）。API経由で通信します。<br />
-                llama-serverを「--cors '*'」オプション付きで起動すると直接アクセスが可能になります。
-              </p>
-            </div>
+        {/* CORS関連の注意メッセージ */}
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 text-blue-500 mr-2" />
+            <p className="text-sm text-blue-700">
+              llama-serverがCORSをサポートしていないため、常にAPIルート経由で通信しています。これは通常の動作であり、エラーではありません。
+            </p>
           </div>
-        )}
+        </div>
         
         {messages.map((message, index) => (
           <ChatMessage 
