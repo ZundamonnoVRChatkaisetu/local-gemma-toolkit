@@ -6,6 +6,10 @@ import fetch from 'node-fetch';
 import { getLlamaServerEndpoint, LlamaCompletionParams, isLlamaServerRunning } from './llama-cpp';
 import { Message } from '.';
 
+// node-fetchのAbortController互換性の問題を解決するためのポリフィル
+// @ts-ignore
+global.AbortController = global.AbortController || require('abort-controller');
+
 // レスポンス型定義
 interface LlamaCompletionResponse {
   content: string;
@@ -31,27 +35,61 @@ export async function pingLlamaServer(maxRetries = 3, retryInterval = 1000): Pro
   try {
     for (let i = 0; i < maxRetries; i++) {
       try {
-        const endpoint = `${getLlamaServerEndpoint()}/health`;
-        const response = await fetch(endpoint, { timeout: 2000 });
+        console.log(`Attempting to ping llama-server (attempt ${i+1}/${maxRetries})...`);
         
-        if (response.ok) {
-          console.log('llama-server is responding to health checks');
-          return true;
+        // 直接エンドポイントを構築（getLlamaServerEndpointを使わない）
+        const endpoint = `http://127.0.0.1:8080/health`;
+        
+        // リクエストタイムアウトを設定
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        
+        try {
+          const response = await fetch(endpoint, { 
+            signal: controller.signal,
+            // @ts-ignore
+            timeout: 2000
+          });
+          
+          clearTimeout(timeout);
+          
+          if (response.ok) {
+            console.log('llama-server is responding to health checks');
+            return true;
+          }
+        } catch (fetchError) {
+          console.log(`Fetch error: ${fetchError.message}`);
+        } finally {
+          clearTimeout(timeout);
         }
         
         // モデルエンドポイントも試してみる
-        const modelEndpoint = `${getLlamaServerEndpoint()}/model`;
-        const modelResponse = await fetch(modelEndpoint, { timeout: 2000 });
-        
-        if (modelResponse.ok) {
-          console.log('llama-server is responding to model endpoint');
-          return true;
+        try {
+          const modelEndpoint = `http://127.0.0.1:8080/model`;
+          const modelController = new AbortController();
+          const modelTimeout = setTimeout(() => modelController.abort(), 2000);
+          
+          const modelResponse = await fetch(modelEndpoint, { 
+            signal: modelController.signal,
+            // @ts-ignore
+            timeout: 2000
+          });
+          
+          clearTimeout(modelTimeout);
+          
+          if (modelResponse.ok) {
+            console.log('llama-server is responding to model endpoint');
+            return true;
+          }
+        } catch (modelError) {
+          console.log(`Model endpoint error: ${modelError.message}`);
         }
       } catch (error) {
         console.log(`Attempt ${i+1}/${maxRetries}: llama-server not responding yet`);
       }
       
       if (i < maxRetries - 1) {
+        console.log(`Waiting ${retryInterval}ms before next attempt...`);
         await new Promise(resolve => setTimeout(resolve, retryInterval));
       }
     }
@@ -86,24 +124,24 @@ export function formatMessagesForGemma(messages: Message[]): string {
  * llama.cppサーバーに補完リクエストを送信
  */
 export async function sendCompletionRequest(params: LlamaCompletionParams): Promise<string> {
-  if (!isLlamaServerRunning()) {
-    throw new Error('llama-server is not running');
-  }
-  
+  // サーバー起動チェックをURLベースで行う
   try {
     // サーバーが応答するか確認
-    const isResponding = await pingLlamaServer();
+    const isResponding = await pingLlamaServer(2, 500);
     if (!isResponding) {
-      throw new Error('llama-server is not responding');
+      console.error('No response from llama-server, but continuing anyway...');
     }
     
-    const endpoint = `${getLlamaServerEndpoint()}/completion`;
+    // 明示的なエンドポイント指定
+    const endpoint = `http://127.0.0.1:8080/completion`;
     
     // timeoutを追加
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     
     try {
+      console.log('Sending completion request to llama-server...');
+      
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -117,10 +155,13 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
       
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`Server response error: ${response.status} ${errorText}`);
         throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
       }
       
       const data = await response.json() as LlamaCompletionResponse;
+      console.log('Received completion response');
+      
       return data.content || '応答内容がありませんでした。もう一度お試しください。';
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -143,18 +184,16 @@ export async function sendCompletionRequest(params: LlamaCompletionParams): Prom
 export async function* sendStreamingCompletionRequest(
   params: LlamaCompletionParams
 ): AsyncGenerator<string, void, unknown> {
-  if (!isLlamaServerRunning()) {
-    throw new Error('llama-server is not running');
-  }
-  
+  // サーバー起動チェックをURLベースで行う
   try {
     // サーバーが応答するか確認
-    const isResponding = await pingLlamaServer(2, 500);
+    const isResponding = await pingLlamaServer(1, 500);
     if (!isResponding) {
-      throw new Error('llama-server is not responding');
+      console.error('No response from llama-server, but continuing anyway...');
     }
     
-    const endpoint = `${getLlamaServerEndpoint()}/completion`;
+    // 明示的なエンドポイント指定
+    const endpoint = `http://127.0.0.1:8080/completion`;
     
     // stream: trueを明示的に設定
     const requestParams = {
@@ -167,6 +206,8 @@ export async function* sendStreamingCompletionRequest(
     const timeout = setTimeout(() => controller.abort(), 30000);
     
     try {
+      console.log('Sending streaming request to llama-server...');
+      
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -180,6 +221,7 @@ export async function* sendStreamingCompletionRequest(
       
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`Server response error: ${response.status} ${errorText}`);
         throw new Error(`llama-server returned status ${response.status}: ${errorText}`);
       }
       
@@ -191,16 +233,23 @@ export async function* sendStreamingCompletionRequest(
       let buffer = '';
       let receivedSomething = false;
       
+      console.log('Starting to read stream...');
+      
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            console.log('Stream reading complete.');
+            break;
+          }
           
           // 何かデータを受信した
           receivedSomething = true;
           
           // 受信したデータをデコード
           const chunk = decoder.decode(value, { stream: true });
+          console.log(`Received chunk: ${chunk.length} bytes`);
+          
           buffer += chunk;
           
           // JSONライン形式でデータが送られてくるため、行ごとに処理
@@ -258,6 +307,7 @@ export async function* sendStreamingCompletionRequest(
         
         // ストリームが終了したが何も受信しなかった場合
         if (!receivedSomething) {
+          console.error('No data received from the server');
           throw new Error('No data received from the server');
         }
       } finally {
@@ -290,12 +340,9 @@ export async function getModelInfo(): Promise<{
     vocab_size: number;
   }
 }> {
-  if (!isLlamaServerRunning()) {
-    throw new Error('llama-server is not running');
-  }
-  
   try {
-    const endpoint = `${getLlamaServerEndpoint()}/model`;
+    // 明示的なエンドポイント指定
+    const endpoint = `http://127.0.0.1:8080/model`;
     
     // タイムアウト設定
     const controller = new AbortController();
