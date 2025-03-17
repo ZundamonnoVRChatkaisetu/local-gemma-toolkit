@@ -3,7 +3,7 @@ import { ChatInterface } from '@/components/chat/chat-interface';
 
 export const metadata: Metadata = {
   title: 'チャット | Local Gemma Toolkit',
-  description: 'Gemma 27B（6B量子化）モデルとローカルでチャット',
+  description: 'Gemma 12B（Q8_0量子化）モデルとローカルでチャット',
 };
 
 export default function ChatPage() {
@@ -19,7 +19,7 @@ export default function ChatPage() {
       <div className="py-4">
         <h1 className="text-2xl font-bold">Gemmaとチャット</h1>
         <p className="text-sm text-gray-500">
-          Gemma 27B（6B量子化）搭載 - 100％ローカルデバイス上で動作
+          Gemma 12B（Q8_0量子化）搭載 - 100％ローカルデバイス上で動作
         </p>
       </div>
       
