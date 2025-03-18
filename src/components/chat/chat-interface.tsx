@@ -98,6 +98,30 @@ export function ChatInterface({
     return false;
   };
 
+  // JSONレスポンスをパースして処理する関数
+  const parseAndExtractCompletion = (text: string): string => {
+    try {
+      // JSONとして解析を試みる
+      const data = JSON.parse(text);
+      
+      // completionフィールドがあれば、それを返す
+      if (data.completion) {
+        return data.completion;
+      }
+      
+      // エラーメッセージがあれば、それを返す
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // それ以外の場合は元のテキストを返す
+      return text;
+    } catch (e) {
+      // JSON解析に失敗した場合は、元のテキストをそのまま返す
+      return text;
+    }
+  };
+
   const handleStreamedResponse = async (response: Response) => {
     if (!response.body) {
       throw new Error('レスポンスボディが空です');
@@ -111,8 +135,12 @@ export function ChatInterface({
       console.log(`🔵 [ChatInterface] Received full response of length: ${text.length}`);
       console.log(`🔵 [ChatInterface] Response preview: ${text.slice(0, 200)}${text.length > 200 ? '...' : ''}`);
       
+      // レスポンステキストからcompletionを抽出
+      const extractedContent = parseAndExtractCompletion(text);
+      console.log(`🔵 [ChatInterface] Extracted content: ${extractedContent.slice(0, 200)}${extractedContent.length > 200 ? '...' : ''}`);
+      
       // 段階的に表示する（ストリーミング効果をシミュレート）
-      const chunks = splitIntoChunks(text, 20);
+      const chunks = splitIntoChunks(extractedContent, 20);
       let accumulatedText = '';
       
       for (const chunk of chunks) {
@@ -122,7 +150,7 @@ export function ChatInterface({
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       
-      return text;
+      return extractedContent;
     } catch (error) {
       console.error('🔴 [ChatInterface] Error processing response:', error);
       throw error;
@@ -309,7 +337,7 @@ export function ChatInterface({
       const data = await response.json();
       console.log('Server status refresh response:', data);
       
-      if (data.status?.isRunning) {
+      if (data.status?.isRunning) {, 
         setServerStatus('running');
         setError(null);
       } else if (data.status?.serverStarting) {
