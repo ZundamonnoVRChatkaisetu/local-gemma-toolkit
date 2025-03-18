@@ -39,7 +39,15 @@ export async function POST(req: NextRequest) {
     let serverConnected = false;
     let serverMessage = '';
     
-    // 1. 直接APIエンドポイントを確認
+    // 1. まずプロセスチェック
+    const processRunning = isLlamaServerRunning();
+    if (processRunning) {
+      console.log('🟢 [API Route] LLM server process is running');
+    } else {
+      console.warn('🟡 [API Route] LLM server process is not running');
+    }
+    
+    // 2. サーバーヘルスチェック
     try {
       const response = await fetch('http://127.0.0.1:8080/health', {
         method: 'GET',
@@ -55,122 +63,54 @@ export async function POST(req: NextRequest) {
     } catch (healthError) {
       console.warn(`🟡 [API Route] Health check failed: ${healthError.message}`);
     }
-    
-    // 2. プロセスチェック
-    if (!serverConnected) {
-      const processRunning = isLlamaServerRunning();
-      if (processRunning) {
-        console.log('🟢 [API Route] LLM server process is running');
-        serverConnected = true; // プロセスが動いていれば接続可能とみなす
-      } else {
-        console.warn('🟡 [API Route] LLM server process is not running');
-      }
+
+    // 3. プロセスが動いていればサーバーが接続可能と判断
+    if (processRunning) {
+      serverConnected = true;
     }
     
     // サーバーが応答していない場合
     if (!serverConnected) {
-      // ストリーミングモードの場合は特別なレスポンス
-      if (stream) {
-        const encoder = new TextEncoder();
-        const customReadable = new ReadableStream({
-          start(controller) {
-            controller.enqueue(encoder.encode('LLMサーバーが応答していません。サーバーを起動してください。'));
-            controller.close();
-          }
-        });
+      console.log('🔴 [API Route] LLM server is not available');
+      
+      // 非ストリーミングレスポンスとして返す
+      return NextResponse.json(
+        { 
+          error: 'LLMサーバーが応答していません。サーバーを起動してください。',
+          serverStatus: 'stopped'
+        },
+        { status: 503 }
+      );
+    }
+    
+    // If stream is true, set up a non-streaming response as JSON only
+    if (stream) {
+      console.log('🟢 [API Route] Setting up non-streaming JSON response instead of stream');
+      
+      try {
+        // Use the non-streaming version instead
+        console.log('🟢 [API Route] Using library implementation for completion');
         
-        return new NextResponse(customReadable, {
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
-          },
-        });
-      } else {
-        return NextResponse.json(
-          { 
-            error: 'LLMサーバーが応答していません。サーバーを起動してください。',
-            serverStatus: 'stopped'
-          },
-          { status: 503 }
-        );
+        // ライブラリ実装で補完を生成
+        const completion = await generateCompletion(messages);
+        console.log('🟢 [API Route] Generated completion:', completion.slice(0, 50) + (completion.length > 50 ? '...' : ''));
+        
+        return NextResponse.json({ completion });
+      } catch (error) {
+        console.error('🔴 [API Route] Error in completion:', error);
+        
+        const errorMessage = error instanceof Error 
+          ? error.message 
+          : '不明なエラーが発生しました';
+        
+        return NextResponse.json({ 
+          error: '補完生成に失敗しました',
+          details: errorMessage 
+        }, { status: 500 });
       }
     }
     
-    // If stream is true, set up a streaming response
-    if (stream) {
-      console.log('🟢 [API Route] Setting up streaming response');
-      const encoder = new TextEncoder();
-      const customReadable = new ReadableStream({
-        async start(controller) {
-          try {
-            // 「生成中...」と表示
-            controller.enqueue(encoder.encode(''));
-            
-            // 常にライブラリ実装を使用（直接通信はスキップ）
-            console.log('🟢 [API Route] Using library implementation for streaming');
-            
-            try {
-              // Use the streaming version of the LLM completion
-              const streamGen = streamCompletion(messages);
-              
-              // 応答を受信したかどうかを追跡
-              let receivedResponse = false;
-              
-              // Send message as chunks come in
-              for await (const chunk of streamGen) {
-                receivedResponse = true;
-                console.log('🟢 [API Route] Streaming chunk:', chunk.slice(0, 50) + (chunk.length > 50 ? '...' : ''));
-                controller.enqueue(encoder.encode(chunk));
-              }
-              
-              // 応答が空だった場合
-              if (!receivedResponse) {
-                console.log('🔴 [API Route] No response received from streamCompletion');
-                controller.enqueue(encoder.encode(
-                  '応答を生成できませんでした。サーバーの状態を確認してください。'
-                ));
-              }
-            } catch (streamError) {
-              console.error('🔴 [API Route] Error in streamCompletion:', streamError);
-              controller.enqueue(encoder.encode(
-                `\n\nストリームエラー: ${streamError.message || '不明なエラー'}`
-              ));
-            }
-            
-            // Save the message to database (in a real implementation, we'd collect the full response first)
-            if (conversationId) {
-              // Placeholder for saving completion to database
-              // In a real implementation, we'd collect the full response and save it
-            }
-            
-            console.log('🟢 [API Route] Streaming completed, closing controller');
-            controller.close();
-          } catch (error) {
-            console.error('Error in streaming response:', error);
-            
-            // エラーメッセージをクライアントに送信
-            const errorMessage = error instanceof Error 
-              ? error.message 
-              : '不明なエラーが発生しました';
-              
-            controller.enqueue(encoder.encode(
-              `\n\n申し訳ありません。エラーが発生しました: ${errorMessage}`
-            ));
-            controller.close();
-          }
-        },
-      });
-      
-      console.log('🟢 [API Route] Returning streaming response');
-      return new NextResponse(customReadable, {
-        headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Cache-Control': 'no-cache, no-transform',
-          'X-Content-Type-Options': 'nosniff',
-        },
-      });
-    }
-    
-    // Non-streaming response
+    // 基本的な非ストリーミングレスポンス
     try {
       // 常にライブラリ実装を使用（直接通信はスキップ）
       console.log('🟢 [API Route] Using library implementation for non-streaming response');
@@ -275,9 +215,9 @@ export async function GET(req: NextRequest) {
       
       // プロセスが起動しているかチェック
       if (isLlamaServerRunning()) {
-        serverStatus = 'starting';
-        serverMessage = 'サーバープロセスは起動していますが、HTTPリクエストにはまだ応答していません';
-        // プロセスが実行中であれば、応答可能と見なす（起動中）
+        serverStatus = 'running'; // プロセスが動いているなら'running'に設定
+        serverMessage = 'サーバープロセスは起動しています';
+        // プロセスが実行中であれば、応答可能と見なす
         serverResponding = true;
       }
     }
