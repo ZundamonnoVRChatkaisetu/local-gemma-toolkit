@@ -5,7 +5,7 @@ import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { Message } from '@/lib/gemma';
 import { AlertCircle } from 'lucide-react';
-import { ServerStatusMonitor } from '../server-status-monitor';
+import { ServerStatusMonitor } from '@/components/server-status-monitor';
 
 interface ChatInterfaceProps {
   initialMessages?: Message[];
