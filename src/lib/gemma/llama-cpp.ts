@@ -79,10 +79,46 @@ function findAvailableBinary(): string {
   return process.platform === 'win32' ? 'bin\\llama-server.exe' : './bin/llama-server';
 }
 
+// モデルファイルを自動検出
+function findAvailableModel(): string {
+  const modelsDir = path.join(process.cwd(), 'models');
+  
+  // 検索対象のモデル名
+  const preferredModels = [
+    'gemma-3-12b-it-Q8_0.gguf',
+    'gemma-3-27b-it-Q6_K.gguf',
+    'gemma-3-27b-it-Q5_K.gguf'
+  ];
+  
+  if (fs.existsSync(modelsDir)) {
+    try {
+      const files = fs.readdirSync(modelsDir);
+      
+      // 優先度順にモデルを探す
+      for (const model of preferredModels) {
+        if (files.includes(model)) {
+          return path.join(modelsDir, model);
+        }
+      }
+      
+      // いずれも見つからない場合は.ggufファイルを探す
+      const ggufFiles = files.filter(f => f.endsWith('.gguf'));
+      if (ggufFiles.length > 0) {
+        return path.join(modelsDir, ggufFiles[0]);
+      }
+    } catch (err) {
+      console.error('Error reading models directory:', err);
+    }
+  }
+  
+  // デフォルトパスを返す
+  return path.join(process.cwd(), 'models/gemma-3-12b-it-Q8_0.gguf');
+}
+
 // デフォルト設定
 export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
   binaryPath: findAvailableBinary(),
-  modelPath: path.join(process.cwd(), 'models/gemma-3-12b-it-Q8_0.gguf'),
+  modelPath: findAvailableModel(),
   contextSize: 4096,
   batchSize: 512,
   threads: Math.max(1, Math.floor(os.cpus().length * 0.75)), // CPUコア数の75%
@@ -96,24 +132,44 @@ export const DEFAULT_LLAMA_CONFIG: LlamaCppConfig = {
 // llama-serverプロセスの状態管理
 let serverProcess: ChildProcess | null = null;
 let isServerRunning = false;
-let currentConfig: LlamaCppConfig = DEFAULT_LLAMA_CONFIG;
+let currentConfig: LlamaCppConfig = { ...DEFAULT_LLAMA_CONFIG };
 let corsSupported = false; // サーバーがCORSをサポートしているかのフラグ
+
+// サーバー初期化状態を管理する変数（グローバルに共有）
+export let isServerStarting = false;
+export let lastInitAttempt = 0;
 
 /**
  * llama.cppバイナリが存在するか確認
  */
 export async function checkLlamaBinary(config: LlamaCppConfig = currentConfig): Promise<boolean> {
+  console.log(`Checking for llama binary at ${config.binaryPath}`);
+  
   try {
-    await fs.promises.access(config.binaryPath, fs.constants.X_OK);
+    const binaryFullPath = path.resolve(config.binaryPath);
+    console.log(`Full path resolved to: ${binaryFullPath}`);
+    
+    await fs.promises.access(binaryFullPath, fs.constants.F_OK);
+    console.log(`Binary exists at ${binaryFullPath}`);
+    
+    // Windowsでは実行権限の確認は不要
+    if (process.platform !== 'win32') {
+      await fs.promises.access(binaryFullPath, fs.constants.X_OK);
+      console.log(`Binary is executable`);
+    }
+    
     return true;
   } catch (error) {
     console.error(`llama.cpp binary not found or not executable at ${config.binaryPath}`);
+    console.error(`Error details: ${error instanceof Error ? error.message : error}`);
     
     // 利用可能なバイナリを探す
     try {
       const binDir = path.join(process.cwd(), 'bin');
       if (fs.existsSync(binDir)) {
         const files = await fs.promises.readdir(binDir);
+        console.log(`Files in bin directory: ${files.join(', ')}`);
+        
         const exeFiles = files.filter(f => 
           f.endsWith('.exe') || 
           (!f.endsWith('.dll') && !f.endsWith('.md') && !f.includes('.'))
@@ -124,7 +180,7 @@ export async function checkLlamaBinary(config: LlamaCppConfig = currentConfig): 
           exeFiles.forEach(file => console.log(`- ${file}`));
           
           // 最初の実行可能ファイルを使用
-          const firstExe = path.join(binDir, exeFiles[0]);
+          const firstExe = path.join('bin', exeFiles[0]);
           console.log(`Will try to use: ${firstExe}`);
           
           // 設定を更新
@@ -132,7 +188,7 @@ export async function checkLlamaBinary(config: LlamaCppConfig = currentConfig): 
           
           // 実行権限を確認
           if (process.platform !== 'win32') {
-            await fs.promises.chmod(firstExe, 0o755);
+            await fs.promises.chmod(path.resolve(firstExe), 0o755);
           }
           
           return true;
@@ -150,16 +206,24 @@ export async function checkLlamaBinary(config: LlamaCppConfig = currentConfig): 
  * モデルファイルが存在するか確認
  */
 export async function checkModelFile(config: LlamaCppConfig = currentConfig): Promise<boolean> {
+  console.log(`Checking for model file at ${config.modelPath}`);
+  
   try {
-    await fs.promises.access(config.modelPath, fs.constants.R_OK);
+    const modelFullPath = path.resolve(config.modelPath);
+    console.log(`Full path resolved to: ${modelFullPath}`);
+    
+    await fs.promises.access(modelFullPath, fs.constants.R_OK);
+    console.log(`Model file exists and is readable at ${modelFullPath}`);
     return true;
   } catch (error) {
     console.error(`Model file not found or not readable at ${config.modelPath}`);
+    console.error(`Error details: ${error instanceof Error ? error.message : error}`);
     
     // モデルディレクトリ内の利用可能なモデルを検索
     try {
       const modelsDir = path.join(process.cwd(), 'models');
       const files = await fs.promises.readdir(modelsDir);
+      console.log(`Files in models directory: ${files.join(', ')}`);
       
       // .ggufまたは.binファイルを探す
       const modelFiles = files.filter(file => file.endsWith('.gguf') || file.endsWith('.bin'));
@@ -169,14 +233,14 @@ export async function checkModelFile(config: LlamaCppConfig = currentConfig): Pr
         modelFiles.forEach(file => console.log(`- ${file}`));
         
         // 最初のモデルファイルを使用
-        const firstModel = path.join(modelsDir, modelFiles[0]);
-        console.log(`Will try to use: ${firstModel}`);
+        const modelPath = path.join('models', modelFiles[0]);
+        console.log(`Will try to use: ${modelPath}`);
         
         // 設定を更新
-        currentConfig.modelPath = firstModel;
+        currentConfig.modelPath = modelPath;
         
         // 再度チェック
-        await fs.promises.access(firstModel, fs.constants.R_OK);
+        await fs.promises.access(path.resolve(modelPath), fs.constants.R_OK);
         return true;
       }
     } catch (err) {
@@ -236,7 +300,8 @@ export async function detectGpuCapabilities(): Promise<number> {
 export async function checkCorsSupport(binaryPath: string): Promise<boolean> {
   try {
     // まずllama-serverのヘルプを実行して、オプション一覧を取得
-    const { stdout } = await execAsync(`"${binaryPath}" --help`);
+    const binaryFullPath = path.resolve(binaryPath);
+    const { stdout } = await execAsync(`"${binaryFullPath}" --help`);
     
     // ヘルプ出力にcorsオプションが含まれているか確認
     return stdout.includes('--cors') || stdout.includes('-cors');
@@ -282,7 +347,17 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     return true;
   }
   
+  // 初期化中の場合も処理をスキップ
+  if (isServerStarting) {
+    console.log('llama-server initialization is already in progress');
+    return false;
+  }
+  
   try {
+    // 初期化フラグを設定
+    isServerStarting = true;
+    lastInitAttempt = Date.now();
+    
     // 設定をマージ
     currentConfig = { ...DEFAULT_LLAMA_CONFIG, ...config };
     
@@ -291,6 +366,8 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     const modelExists = await checkModelFile(currentConfig);
     
     if (!binaryExists || !modelExists) {
+      console.error('Required files not found, cannot start server');
+      isServerStarting = false;
       throw new Error('Required files not found');
     }
     
@@ -312,7 +389,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     // llama-serverコマンドの構築
     // 全てのオプションをダブルハイフン形式に統一し、不要なオプションを削除
     const serverArgs = [
-      '--model', currentConfig.modelPath,
+      '--model', path.resolve(currentConfig.modelPath),
       '--ctx-size', currentConfig.contextSize.toString(),
       '--batch-size', currentConfig.batchSize.toString(),
       '--threads', currentConfig.threads.toString(),
@@ -333,8 +410,10 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     console.log(`Starting llama-server with command: ${currentConfig.binaryPath} ${serverArgs.join(' ')}`);
     
     // サーバープロセスを起動
-    serverProcess = spawn(currentConfig.binaryPath, serverArgs, {
+    const binaryFullPath = path.resolve(currentConfig.binaryPath);
+    serverProcess = spawn(binaryFullPath, serverArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32', // Windows環境ではシェル経由で実行
       detached: false
     });
     
@@ -359,6 +438,15 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     serverProcess.on('exit', (code, signal) => {
       console.log(`llama-server process exited with code ${code} and signal ${signal}`);
       isServerRunning = false;
+      isServerStarting = false;
+      serverProcess = null;
+    });
+    
+    // エラーハンドラ
+    serverProcess.on('error', (error) => {
+      console.error(`llama-server process error: ${error.message}`);
+      isServerRunning = false;
+      isServerStarting = false;
       serverProcess = null;
     });
     
@@ -384,7 +472,12 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
           let errorMsg = 'Unknown error in server command line';
           
           // エラーメッセージを抽出
-          const errorMatch = output.match(/error: (.*)/);
+          const errorMatch = output.match(/error: (.*)/) ||
+                            output.match(/invalid option: (.*)/) ||
+                            output.match(/unrecognized option '(.*)'/) ||
+                            output.match(/unrecognized option "(.*)"/) ||
+                            output.match(/error: (.*)/);
+          
           if (errorMatch) {
             errorMsg = errorMatch[1];
             
@@ -479,6 +572,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     await new Promise(resolve => setTimeout(resolve, 5000));
     
     isServerRunning = true;
+    isServerStarting = false;
     console.log(`llama-server started successfully on ${currentConfig.serverAddress}:${currentConfig.serverPort}`);
     
     // CORSが有効化されているかどうかを通知
@@ -499,6 +593,7 @@ export async function startLlamaServer(config: Partial<LlamaCppConfig> = {}): Pr
     }
     
     isServerRunning = false;
+    isServerStarting = false;
     return false;
   }
 }
@@ -533,6 +628,7 @@ export async function stopLlamaServer(): Promise<boolean> {
     
     serverProcess = null;
     isServerRunning = false;
+    isServerStarting = false;
     console.log('llama-server stopped successfully');
     return true;
   } catch (error) {
