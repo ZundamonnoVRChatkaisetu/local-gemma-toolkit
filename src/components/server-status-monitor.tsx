@@ -35,6 +35,7 @@ export function ServerStatusMonitor({
     details: {}
   });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [clientSide, setClientSide] = useState(false);
 
   const fetchServerStatus = async () => {
     try {
@@ -115,6 +116,9 @@ export function ServerStatusMonitor({
   };
 
   useEffect(() => {
+    // クライアントサイドでのレンダリングであることを設定
+    setClientSide(true);
+    
     // 初期ロード
     fetchServerStatus();
     
@@ -201,7 +205,14 @@ export function ServerStatusMonitor({
             <span>コンテキスト長: {status.details.contextLength || 4096}</span>
           </div>
           <div className="col-span-2 text-xs text-gray-500">
-            最終更新: {new Date(status.timestamp).toLocaleString('ja-JP')}
+            {/* クライアントサイドでのみ時間表示を行い、ハイドレーションエラーを防止 */}
+            {clientSide ? (
+              <span suppressHydrationWarning>
+                最終更新: {new Date(status.timestamp).toLocaleString('ja-JP')}
+              </span>
+            ) : (
+              <span>最終更新: 読み込み中...</span>
+            )}
           </div>
         </div>
       )}
