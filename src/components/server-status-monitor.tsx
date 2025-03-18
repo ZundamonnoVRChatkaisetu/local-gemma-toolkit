@@ -38,7 +38,8 @@ export function ServerStatusMonitor({
   const fetchServerStatus = async () => {
     try {
       setIsRefreshing(true);
-      const response = await fetch('/api/llm/initialize');
+      // 正しいAPIエンドポイントを使用
+      const response = await fetch('/api/llm/status');
       
       if (!response.ok) {
         setStatus({
@@ -55,16 +56,22 @@ export function ServerStatusMonitor({
       let serverStatus: 'running' | 'initializing' | 'stopped' | 'unknown' = 'unknown';
       let statusMessage = '';
       
+      // 新しいAPI応答形式に合わせて解析
       if (data.status) {
-        if (data.status.isRunning) {
-          serverStatus = 'running';
-          statusMessage = 'LLMサーバーが正常に動作しています';
-        } else if (data.status.serverStarting) {
-          serverStatus = 'initializing';
-          statusMessage = 'LLMサーバーが初期化中です';
-        } else {
-          serverStatus = 'stopped';
-          statusMessage = 'LLMサーバーが停止しています';
+        serverStatus = data.status as 'running' | 'initializing' | 'stopped' | 'unknown';
+        
+        switch (serverStatus) {
+          case 'running':
+            statusMessage = 'LLMサーバーが正常に動作しています';
+            break;
+          case 'initializing':
+            statusMessage = 'LLMサーバーが初期化中です';
+            break;
+          case 'stopped':
+            statusMessage = 'LLMサーバーが停止しています';
+            break;
+          default:
+            statusMessage = 'サーバーの状態が不明です';
         }
       }
       
@@ -76,6 +83,17 @@ export function ServerStatusMonitor({
         corsEnabled: data.corsEnabled || false,
         gpuLayers: data.gpuLayers || 0
       };
+      
+      // さらに詳細な情報が利用可能な場合は使用
+      if (data.detailed) {
+        if (data.detailed.model) {
+          details.model = data.detailed.model.name || details.model;
+        }
+        
+        if (data.detailed.hardware && data.detailed.hardware.gpu) {
+          details.gpuLayers = data.detailed.hardware.gpu.layers || details.gpuLayers;
+        }
+      }
       
       setStatus({
         status: serverStatus,
