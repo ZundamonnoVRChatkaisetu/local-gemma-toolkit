@@ -337,7 +337,7 @@ export function ChatInterface({
       const data = await response.json();
       console.log('Server status refresh response:', data);
       
-      if (data.status?.isRunning) {, 
+      if (data.status?.isRunning) {
         setServerStatus('running');
         setError(null);
       } else if (data.status?.serverStarting) {
