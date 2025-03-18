@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, RefreshCw, Server, Cpu, Memory } from 'lucide-react';
+import { AlertCircle, RefreshCw, Server, Cpu } from 'lucide-react';
+import { Database } from 'lucide-react'; // Memory アイコンが利用できないため、似た意味の Database アイコンに変更
 
 interface ServerStatus {
   status: 'running' | 'initializing' | 'stopped' | 'unknown';
@@ -189,7 +190,7 @@ export function ServerStatusMonitor({
             <span>モデル: {status.details.model || '不明'}</span>
           </div>
           <div className="flex items-center">
-            <Memory className="h-3 w-3 mr-1" />
+            <Database className="h-3 w-3 mr-1" />
             <span>メモリ使用量: {status.details.memoryUsage || 0} MB</span>
           </div>
           <div className="flex items-center">
