@@ -11,6 +11,8 @@ import {
   LlamaCppConfig,
   DEFAULT_LLAMA_CONFIG,
   startLlamaServerWithRetry,
+  isServerStarting,
+  lastInitAttempt
 } from './llama-cpp';
 
 import {
@@ -35,17 +37,13 @@ const DEFAULT_MODEL_PARAMS: ModelParams = {
 // モデル情報をキャッシュ
 let modelInfoCache: any = null;
 
-// サーバー初期化のステータスを追跡
-let isInitializingServer = false;
-let lastInitAttempt = 0;
-
 /**
  * LLMシステムを初期化して起動
  * 503エラーなどの初期化中状態を適切に処理
  */
 export async function initializeLLM(config?: Partial<LlamaCppConfig>): Promise<boolean> {
   // 重複初期化を防ぐ
-  if (isInitializingServer) {
+  if (isServerStarting) {
     console.log('Another initialization process is already running');
     return false;
   }
@@ -57,9 +55,6 @@ export async function initializeLLM(config?: Partial<LlamaCppConfig>): Promise<b
     return false;
   }
   
-  lastInitAttempt = now;
-  isInitializingServer = true;
-  
   try {
     // 既に実行中かチェック（より詳細なテスト）
     if (isLlamaServerRunning()) {
@@ -68,7 +63,6 @@ export async function initializeLLM(config?: Partial<LlamaCppConfig>): Promise<b
         const serverTest = await testServerConnection();
         if (serverTest.success) {
           console.log(`LLM is already initialized and responding (status: ${serverTest.status})`);
-          isInitializingServer = false;
           return true;
         } else {
           console.log('LLM process is running but not responding to HTTP requests yet');
@@ -174,11 +168,9 @@ export async function initializeLLM(config?: Partial<LlamaCppConfig>): Promise<b
     }
     
     console.log('Gemma LLM initialization process completed');
-    isInitializingServer = false;
     return true;
   } catch (error) {
     console.error('Error initializing Gemma LLM:', error);
-    isInitializingServer = false;
     return false;
   }
 }
@@ -221,16 +213,16 @@ export async function shutdownLLM(): Promise<boolean> {
   console.log('Shutting down Gemma LLM...');
   
   // 初期化中の場合は少し待機
-  if (isInitializingServer) {
+  if (isServerStarting) {
     console.log('LLM is still initializing, waiting before shutdown');
     // 最大10秒待機
     for (let i = 0; i < 10; i++) {
-      if (!isInitializingServer) break;
+      if (!isServerStarting) break;
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     // まだ初期化中の場合は警告
-    if (isInitializingServer) {
+    if (isServerStarting) {
       console.warn('LLM is still initializing after wait, forcing shutdown');
     }
   }
@@ -238,7 +230,6 @@ export async function shutdownLLM(): Promise<boolean> {
   try {
     await stopLlamaServer();
     modelInfoCache = null;
-    isInitializingServer = false;
     console.log('Gemma LLM shut down successfully');
     return true;
   } catch (error) {
