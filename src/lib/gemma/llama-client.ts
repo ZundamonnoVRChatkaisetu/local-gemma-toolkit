@@ -26,36 +26,28 @@ export async function pingLlamaServer(
 ): Promise<boolean> {
   console.log(`Attempting to ping llama-server (attempt 1/${attempts})...`);
   
-  // 初回試行
-  try {
-    const response = await fetch(`${DEFAULT_SERVER_URL}/health`, {
-      method: 'GET',
-      timeout: timeout
-    });
-    
-    // 200 OK または 503 Service Unavailable（起動中）も成功とみなす
-    if (response.ok || response.status === 503) {
-      return true;
-    }
-    
-    console.log(`Health check returned status code: ${response.status}`);
-  } catch (error) {
-    console.log('Fetch error:', error instanceof Error ? error.message : String(error));
-    
-    // モデルエンドポイントも試してみる（一部のサーバーではhealthが未実装の場合がある）
+  // すべての試行でチェックするエンドポイント
+  const endpoints = ['/health', '/model', '/'];
+  
+  // 初回試行（すべてのエンドポイントを試す）
+  for (const endpoint of endpoints) {
     try {
-      const modelResponse = await fetch(`${DEFAULT_SERVER_URL}/model`, {
+      console.log(`Trying endpoint ${endpoint}...`);
+      const response = await fetch(`${DEFAULT_SERVER_URL}${endpoint}`, {
         method: 'GET',
         timeout: timeout
       });
       
-      if (modelResponse.ok || modelResponse.status === 503) {
+      // 200 OK または 503 Service Unavailable（起動中）も成功とみなす
+      if (response.ok || response.status === 503) {
+        console.log(`Endpoint ${endpoint} responded with status ${response.status}`);
         return true;
       }
       
-      console.log(`Model endpoint error: ${modelResponse.status}`);
-    } catch (modelError) {
-      console.log('Model endpoint error:', modelError instanceof Error ? modelError.message : String(modelError));
+      console.log(`Endpoint ${endpoint} returned status code: ${response.status}`);
+    } catch (error) {
+      console.log(`Error checking endpoint ${endpoint}:`, error instanceof Error ? error.message : String(error));
+      // このエンドポイントのエラーは無視して次を試す
     }
   }
   
@@ -68,34 +60,24 @@ export async function pingLlamaServer(
     
     console.log(`Attempting to ping llama-server (attempt ${i+1}/${attempts})...`);
     
-    try {
-      const response = await fetch(`${DEFAULT_SERVER_URL}/health`, {
-        method: 'GET',
-        timeout: timeout + (i * 1000) // タイムアウトも徐々に増やす
-      });
-      
-      if (response.ok || response.status === 503) {
-        return true;
-      }
-      
-      console.log(`Health check returned status code: ${response.status}`);
-    } catch (error) {
-      console.log('Fetch error:', error instanceof Error ? error.message : String(error));
-      
-      // モデルエンドポイントも試してみる
+    // すべてのエンドポイントを再度試す
+    for (const endpoint of endpoints) {
       try {
-        const modelResponse = await fetch(`${DEFAULT_SERVER_URL}/model`, {
+        console.log(`Trying endpoint ${endpoint}...`);
+        const response = await fetch(`${DEFAULT_SERVER_URL}${endpoint}`, {
           method: 'GET',
-          timeout: timeout + (i * 1000)
+          timeout: timeout + (i * 1000) // タイムアウトも徐々に増やす
         });
         
-        if (modelResponse.ok || modelResponse.status === 503) {
+        if (response.ok || response.status === 503) {
+          console.log(`Endpoint ${endpoint} responded with status ${response.status}`);
           return true;
         }
         
-        console.log(`Model endpoint error: ${modelResponse.status}`);
-      } catch (modelError) {
-        console.log('Model endpoint error:', modelError instanceof Error ? modelError.message : String(modelError));
+        console.log(`Endpoint ${endpoint} returned status code: ${response.status}`);
+      } catch (error) {
+        console.log(`Error checking endpoint ${endpoint}:`, error instanceof Error ? error.message : String(error));
+        // このエンドポイントのエラーは無視して次を試す
       }
     }
   }
@@ -311,51 +293,93 @@ export async function* generateStreamingCompletion(
 
 /**
  * サーバーとの接続をテストする
- * より厳密なサーバー接続テストを実行
+ * より厳密なサーバー接続テストを実行し、詳細なステータス情報を返す
  */
 export async function testServerConnection(): Promise<{
   success: boolean;
-  status: 'running' | 'initializing' | 'unavailable';
+  status: 'running' | 'initializing' | 'starting' | 'unavailable';
   message: string;
 }> {
   try {
-    // 複数エンドポイントで試行
+    // 複数エンドポイントの状態を確認
     const endpoints = [
-      '/health',
-      '/model',
-      '/',
+      { path: '/health', critical: true },
+      { path: '/model', critical: true },
+      { path: '/', critical: false }
     ];
     
+    let anyEndpointResponded = false;
+    let initializing = false;
+    let detailedStatus = '';
+    
+    // 複数エンドポイントの試行結果をまとめる
     for (const endpoint of endpoints) {
       try {
-        const response = await fetch(`${DEFAULT_SERVER_URL}${endpoint}`, {
+        console.log(`Testing connection to ${endpoint.path}...`);
+        const response = await fetch(`${DEFAULT_SERVER_URL}${endpoint.path}`, {
           method: 'GET',
           timeout: 3000
         });
         
+        // レスポンスステータスを記録
+        detailedStatus += `${endpoint.path}: ${response.status}, `;
+        
         if (response.ok) {
-          return {
-            success: true,
-            status: 'running',
-            message: `Server is running and responded to ${endpoint}`
-          };
+          console.log(`Endpoint ${endpoint.path} returned OK status`);
+          anyEndpointResponded = true;
+          
+          // クリティカルなエンドポイントが応答していれば、即座に成功とみなす
+          if (endpoint.critical) {
+            return {
+              success: true,
+              status: 'running',
+              message: `Server is running and responded to ${endpoint.path} with 200 OK`
+            };
+          }
         } else if (response.status === 503) {
-          return {
-            success: true,
-            status: 'initializing',
-            message: `Server is initializing (status 503) on ${endpoint}`
-          };
+          console.log(`Endpoint ${endpoint.path} returned 503 (initializing)`);
+          initializing = true;
+          anyEndpointResponded = true;
+          
+          // 503も応答とみなす（初期化中の状態）
+          if (endpoint.critical) {
+            return {
+              success: true,
+              status: 'initializing',
+              message: `Server is initializing (status 503) on ${endpoint.path}`
+            };
+          }
         }
       } catch (error) {
-        // このエンドポイントのエラーは無視して次を試す
-        console.warn(`Error testing endpoint ${endpoint}:`, error);
+        // このエンドポイントのエラーは詳細に記録するが、次のエンドポイントを試す
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(`Error testing endpoint ${endpoint.path}:`, errorMessage);
+        detailedStatus += `${endpoint.path}: error (${errorMessage}), `;
       }
     }
     
+    // いずれかのエンドポイントが応答した場合の判定
+    if (anyEndpointResponded) {
+      if (initializing) {
+        return {
+          success: true,
+          status: 'initializing',
+          message: `Server is initializing. Status details: ${detailedStatus.trim()}`
+        };
+      } else {
+        return {
+          success: true,
+          status: 'running',
+          message: `Server is running. Status details: ${detailedStatus.trim()}`
+        };
+      }
+    }
+    
+    // すべてのエンドポイントがタイムアウトまたはエラー
     return {
       success: false,
       status: 'unavailable',
-      message: 'Could not connect to any server endpoint'
+      message: `Could not connect to any server endpoint. Details: ${detailedStatus.trim()}`
     };
   } catch (error) {
     console.error('Error testing server connection:', error);
